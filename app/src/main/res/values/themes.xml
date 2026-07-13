@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.ZenGecko" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">@color/zen_bg</item>
+        <item name="android:navigationBarColor">@color/zen_bg</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:colorAccent">@color/zen_accent</item>
+        <item name="android:windowBackground">@color/zen_bg</item>
+    </style>
+</resources>

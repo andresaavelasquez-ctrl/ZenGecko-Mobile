@@ -1,0 +1,10 @@
+<resources>
+    <color name="zen_bg">#0D0E12</color>
+    <color name="zen_surface">#15161D</color>
+    <color name="zen_surface_alt">#1D1F29</color>
+    <color name="zen_text">#F2F2F5</color>
+    <color name="zen_muted">#A5A6B3</color>
+    <color name="zen_accent">#A78BFA</color>
+    <color name="zen_accent_soft">#2B2540</color>
+    <color name="zen_danger">#F87171</color>
+</resources>
