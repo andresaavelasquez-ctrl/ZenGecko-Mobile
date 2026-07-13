@@ -1,0 +1,66 @@
+# ZenGecko Mobile v0.1.0
+
+Prototipo Android de navegador basado en **GeckoView real**, con una interfaz móvil inspirada en las ideas de productividad de Zen Browser. No utiliza Android WebView ni emulación.
+
+> Proyecto comunitario no oficial. El nombre, iconos y marcas de Zen Browser no se incluyen.
+
+## Incluido en esta primera base
+
+- Motor GeckoView estable, Java 17 y Android API 26+.
+- Sesiones Gecko independientes por pestaña.
+- Barra de direcciones con búsqueda mediante DuckDuckGo.
+- Atrás, adelante, recargar y detener.
+- Pestañas con título, URL y progreso.
+- Espacios de trabajo: Personal, Trabajo y Estudio.
+- Creación de nuevos espacios.
+- Pestañas esenciales visibles en todos los espacios.
+- Restauración básica de pestañas, URLs, títulos y espacios.
+- Barra lateral fija en pantallas de 720dp o más.
+- Panel lateral superpuesto en teléfonos.
+- Apertura de enlaces `http` y `https` enviados desde Android.
+- Bloqueo conservador de permisos sensibles todavía no implementados en UI.
+
+## Abrir en Android Studio
+
+1. Instala Android Studio con Android SDK 36 y JDK 17 o superior.
+2. Abre esta carpeta como proyecto.
+3. Espera la sincronización de Gradle.
+4. Ejecuta `app` en un dispositivo ARM64 o emulador.
+
+El proyecto usa `GECKOVIEW_VERSION=152.+` para localizar la última compilación estable de la rama 152. Después de la primera sincronización exitosa, sustituye ese valor por la versión exacta resuelta para congelar una release reproducible.
+
+## Compilar sin wrapper JAR
+
+Linux/macOS:
+
+```bash
+./bootstrap-gradle.sh :app:assembleDebug
+```
+
+Windows:
+
+```bat
+bootstrap-gradle.bat :app:assembleDebug
+```
+
+APK resultante:
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+## Próximas capas recomendadas
+
+1. Prompts web completos: alertas, archivos, autenticación y permisos.
+2. Descargas con notificación y selector de carpeta.
+3. Historial y marcadores mediante Places.
+4. Restauración binaria de `GeckoSession.SessionState`.
+5. Protección de rastreo configurable.
+6. Extensiones compatibles de Firefox mediante WebExtensionController.
+7. Vista dividida, Glance y pestañas fijadas.
+8. Migración gradual de estado y servicios a Mozilla Android Components.
+9. Pruebas instrumentadas, pruebas de proceso muerto y CI firmado.
+
+## Licencias
+
+El código original de este prototipo se entrega bajo MPL-2.0. GeckoView y Android Components pertenecen a sus respectivos proyectos y conservan sus licencias.
