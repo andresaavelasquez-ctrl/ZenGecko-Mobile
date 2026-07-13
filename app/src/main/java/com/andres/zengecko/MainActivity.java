@@ -5,14 +5,18 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.Insets;
 import android.graphics.drawable.ColorDrawable;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
+import android.view.WindowInsets;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
@@ -44,6 +48,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private GeckoSession displayedSession;
     private boolean wideLayout;
     private boolean rendering;
+    private int safeInsetLeft;
+    private int safeInsetTop;
+    private int safeInsetRight;
+    private int safeInsetBottom;
     private String lastSidebarFingerprint = "";
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -98,6 +106,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         // GeckoSession attached to an obsolete SurfaceView. Only rebuild when the compact/wide
         // layout mode actually changes, and always detach the session first.
         if (nextWideLayout != wideLayout) rebuildUiPreservingSession();
+        if (root != null) root.requestApplyInsets();
         render();
     }
 
@@ -178,6 +187,58 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         geckoView.setBackgroundColor(getColor(R.color.zen_bg));
         browserColumn.addView(geckoView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         setContentView(root);
+        installSafeAreaInsets();
+    }
+
+    private void installSafeAreaInsets() {
+        if (root == null) return;
+        root.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+            int left;
+            int top;
+            int right;
+            int bottom;
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Insets safeArea = windowInsets.getInsets(
+                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                left = safeArea.left;
+                top = safeArea.top;
+                right = safeArea.right;
+                bottom = safeArea.bottom;
+            } else {
+                left = windowInsets.getSystemWindowInsetLeft();
+                top = windowInsets.getSystemWindowInsetTop();
+                right = windowInsets.getSystemWindowInsetRight();
+                bottom = windowInsets.getSystemWindowInsetBottom();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    DisplayCutout cutout = windowInsets.getDisplayCutout();
+                    if (cutout != null) {
+                        left = Math.max(left, cutout.getSafeInsetLeft());
+                        top = Math.max(top, cutout.getSafeInsetTop());
+                        right = Math.max(right, cutout.getSafeInsetRight());
+                        bottom = Math.max(bottom, cutout.getSafeInsetBottom());
+                    }
+                }
+            }
+
+            boolean changed = left != safeInsetLeft || top != safeInsetTop
+                    || right != safeInsetRight || bottom != safeInsetBottom;
+            safeInsetLeft = left;
+            safeInsetTop = top;
+            safeInsetRight = right;
+            safeInsetBottom = bottom;
+            view.setPadding(left, top, right, bottom);
+
+            if (changed) {
+                Log.d(TAG, "Safe area: " + left + "," + top + "," + right + "," + bottom);
+                if (sidebarPopup != null && sidebarPopup.isShowing()) {
+                    sidebarPopup.dismiss();
+                    sidebarPopup = null;
+                }
+            }
+            return windowInsets;
+        });
+        root.requestApplyInsets();
     }
 
     private View createToolbar() {
@@ -216,10 +277,15 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         addressBar.setHint("Buscar o escribir una dirección");
         addressBar.setTextSize(15);
         addressBar.setSelectAllOnFocus(true);
+        addressBar.setFocusableInTouchMode(true);
         addressBar.setImeOptions(EditorInfo.IME_ACTION_GO);
         addressBar.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
         addressBar.setBackgroundResource(R.drawable.bg_address);
         addressBar.setPadding(dp(14), 0, dp(14), 0);
+        addressBar.setOnClickListener(v -> showKeyboard(addressBar));
+        addressBar.setOnFocusChangeListener((v, hasFocus) -> {
+            if (hasFocus) addressBar.post(() -> showKeyboard(addressBar));
+        });
         addressBar.setOnEditorActionListener((v, actionId, event) -> {
             boolean enter = event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER && event.getAction() == KeyEvent.ACTION_DOWN;
             if (actionId == EditorInfo.IME_ACTION_GO || enter) {
@@ -236,7 +302,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         TextView newTab = navButton("+");
         newTab.setContentDescription("Nueva pestaña");
-        newTab.setOnClickListener(v -> { browser.addTab("about:blank", true); addressBar.requestFocus(); });
+        newTab.setOnClickListener(v -> { browser.addTab("about:blank", true); showKeyboard(addressBar); });
         bar.addView(newTab, square(44));
         return bar;
     }
@@ -340,12 +406,18 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private void showSidebarPopup() {
         if (sidebarPopup != null) sidebarPopup.dismiss();
         View panel = createSidebar();
-        int width = Math.min(dp(340), (int)(getResources().getDisplayMetrics().widthPixels * .88f));
-        sidebarPopup = new PopupWindow(panel, width, ViewGroup.LayoutParams.MATCH_PARENT, true);
+        int availableWidth = Math.max(dp(240),
+                getResources().getDisplayMetrics().widthPixels - safeInsetLeft - safeInsetRight);
+        int width = Math.min(dp(340), (int)(availableWidth * .88f));
+        int measuredHeight = root == null ? 0 : root.getHeight();
+        int availableHeight = measuredHeight - safeInsetTop - safeInsetBottom;
+        int height = availableHeight > 0 ? availableHeight : ViewGroup.LayoutParams.MATCH_PARENT;
+
+        sidebarPopup = new PopupWindow(panel, width, height, true);
         sidebarPopup.setBackgroundDrawable(new ColorDrawable(getColor(R.color.zen_surface)));
         sidebarPopup.setElevation(dp(16));
         sidebarPopup.setAnimationStyle(android.R.style.Animation_Dialog);
-        sidebarPopup.showAtLocation(root, Gravity.START | Gravity.TOP, 0, 0);
+        sidebarPopup.showAtLocation(root, Gravity.START | Gravity.TOP, safeInsetLeft, safeInsetTop);
     }
 
     private void promptWorkspace() {
@@ -387,6 +459,15 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 }
             }
         } finally { rendering = false; }
+    }
+
+    private void showKeyboard(View view) {
+        if (view == null) return;
+        view.requestFocus();
+        view.post(() -> {
+            InputMethodManager keyboard = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (keyboard != null) keyboard.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT);
+        });
     }
 
     private TextView navButton(String value) {
