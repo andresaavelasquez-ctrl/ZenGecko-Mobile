@@ -7,6 +7,7 @@ import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
@@ -16,7 +17,6 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
 import android.widget.EditText;
-import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
@@ -30,6 +30,7 @@ import com.andres.zengecko.model.BrowserTab;
 import com.andres.zengecko.model.Workspace;
 
 public final class MainActivity extends Activity implements BrowserRepository.Observer {
+    private static final String TAG = "ZenGecko/Main";
     private BrowserRepository browser;
     private GeckoView geckoView;
     private EditText addressBar;
@@ -51,6 +52,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         window.setStatusBarColor(getColor(R.color.zen_bg));
         window.setNavigationBarColor(getColor(R.color.zen_bg));
 
+        Log.i(TAG, "onCreate; widthDp=" + getResources().getConfiguration().screenWidthDp);
         browser = BrowserRepository.get(this);
         browser.addObserver(this);
         buildUi();
@@ -62,9 +64,24 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         render();
     }
 
+    @Override protected void onStart() {
+        super.onStart();
+        setCurrentSessionActive(true);
+    }
+
+    @Override protected void onStop() {
+        setCurrentSessionActive(false);
+        super.onStop();
+    }
+
     @Override protected void onDestroy() {
-        browser.removeObserver(this);
-        if (sidebarPopup != null) sidebarPopup.dismiss();
+        Log.i(TAG, "onDestroy");
+        if (browser != null) browser.removeObserver(this);
+        if (sidebarPopup != null) {
+            sidebarPopup.dismiss();
+            sidebarPopup = null;
+        }
+        detachGeckoView();
         super.onDestroy();
     }
 
@@ -72,7 +89,15 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     @Override public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        buildUi();
+        boolean nextWideLayout = newConfig.screenWidthDp >= 720;
+        Log.i(TAG, "onConfigurationChanged widthDp=" + newConfig.screenWidthDp
+                + " wide=" + nextWideLayout + " previousWide=" + wideLayout);
+
+        // HyperOS can emit a configuration callback immediately after launch, even when the
+        // layout class did not change. Rebuilding GeckoView in that case leaves the existing
+        // GeckoSession attached to an obsolete SurfaceView. Only rebuild when the compact/wide
+        // layout mode actually changes, and always detach the session first.
+        if (nextWideLayout != wideLayout) rebuildUiPreservingSession();
         render();
     }
 
@@ -81,6 +106,48 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         if (sidebarPopup != null && sidebarPopup.isShowing()) { sidebarPopup.dismiss(); return; }
         if (tab != null && tab.canGoBack && tab.session != null) { tab.session.goBack(); return; }
         super.onBackPressed();
+    }
+
+    private void rebuildUiPreservingSession() {
+        Log.i(TAG, "Rebuilding UI while preserving GeckoSession");
+        if (sidebarPopup != null) {
+            sidebarPopup.dismiss();
+            sidebarPopup = null;
+        }
+        detachGeckoView();
+        lastSidebarFingerprint = "";
+        buildUi();
+    }
+
+    private void detachGeckoView() {
+        displayedSession = null;
+        if (geckoView == null) return;
+        try {
+            GeckoSession released = geckoView.releaseSession();
+            if (released != null) Log.d(TAG, "Released GeckoSession from GeckoView");
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Unable to release GeckoSession", error);
+        }
+    }
+
+    private void attachSession(GeckoSession session) {
+        if (session == null || geckoView == null || displayedSession == session) return;
+        detachGeckoView();
+        try {
+            geckoView.setSession(session);
+            displayedSession = session;
+            Log.d(TAG, "Attached GeckoSession to GeckoView");
+        } catch (RuntimeException error) {
+            displayedSession = null;
+            Log.e(TAG, "Unable to attach GeckoSession", error);
+            throw error;
+        }
+    }
+
+    private void setCurrentSessionActive(boolean active) {
+        if (browser == null) return;
+        BrowserTab tab = browser.getActiveTab();
+        if (tab != null && tab.session != null) tab.session.setActive(active);
     }
 
     private void buildUi() {
@@ -300,11 +367,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         try {
             BrowserTab tab = browser.getActiveTab();
             if (tab == null) return;
-            if (tab.session != null && displayedSession != tab.session) {
-                geckoView.releaseSession();
-                geckoView.setSession(tab.session);
-                displayedSession = tab.session;
-            }
+            attachSession(tab.session);
             if (!addressBar.hasFocus()) addressBar.setText(tab.url == null ? "" : tab.url);
             setEnabled(backButton, tab.canGoBack);
             setEnabled(forwardButton, tab.canGoForward);

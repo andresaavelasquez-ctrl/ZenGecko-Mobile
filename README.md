@@ -1,8 +1,18 @@
-# ZenGecko Mobile v0.1.0
+# ZenGecko Mobile v0.1.1
 
 Prototipo Android de navegador basado en **GeckoView real**, con una interfaz móvil inspirada en las ideas de productividad de Zen Browser. No utiliza Android WebView ni emulación.
 
 > Proyecto comunitario no oficial. El nombre, iconos y marcas de Zen Browser no se incluyen.
+
+
+## Cambios de v0.1.1
+
+- Corrige el ciclo de vida entre `GeckoView` y `GeckoSession` al cambiar la configuración de pantalla.
+- Evita reconstruir toda la interfaz cuando HyperOS envía un cambio de configuración equivalente al iniciar.
+- Libera la sesión antes de reemplazar un `GeckoView` y la vuelve a conectar de forma segura.
+- Inicializa `GeckoRuntime` bajo demanda en lugar de ejecutar `warmUp()` durante `Application.onCreate()`.
+- Añade registros de diagnóstico de Gecko y del ciclo de vida en compilaciones debug.
+- Incrementa `versionCode` a 2 y `versionName` a `0.1.1`.
 
 ## Incluido en esta primera base
 
