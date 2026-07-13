@@ -6,5 +6,7 @@
     <color name="zen_muted">#A5A6B3</color>
     <color name="zen_accent">#A78BFA</color>
     <color name="zen_accent_soft">#2B2540</color>
+    <color name="zen_border">#343746</color>
     <color name="zen_danger">#F87171</color>
+    <color name="zen_success">#6EE7B7</color>
 </resources>
