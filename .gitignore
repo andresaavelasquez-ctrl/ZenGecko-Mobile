@@ -10,3 +10,7 @@ app/build/
 *.apk
 *.aab
 .zengecko-backups/
+.zengecko-signing/
+*.jks
+*.keystore
+signing.properties

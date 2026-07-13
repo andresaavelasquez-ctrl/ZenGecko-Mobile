@@ -1,13 +1,22 @@
 # Changelog
 
+## 0.1.3
+
+- Refreshed the mobile tab panel immediately after tab state changes.
+- Increased the close target to 48 dp and added swipe-to-close.
+- Added a dimmed scrim and outside-tap dismissal for the mobile sidebar.
+- Unified new-tab behavior and hid `about:blank` from the address field.
+- Limited the fixed sidebar to tablets instead of landscape phones.
+- Improved workspace creation validation and focus.
+- Replaced the launcher artwork with an inverted Zen logo variant.
+- Added stable CI signing through encrypted GitHub Actions secrets.
+- Bumped Android versionCode to 4.
+
 ## 0.1.2
 
-- Added safe-area handling for status bars, navigation bars and display cutouts.
-- Reapplied insets after rotations and compact/wide layout changes.
-- Kept the mobile sidebar inside the safe display area.
-- Improved address-bar focus and soft-keyboard activation.
-- Added an unofficial dark launcher icon based on Zen Browser's public visual identity.
-- Ignored local `.zengecko-backups/` directories.
+- Added Android safe-area handling through WindowInsets.
+- Moved controls away from status bars, gesture navigation and display cutouts.
+- Added launcher icon resources.
 - Bumped Android versionCode to 3.
 
 ## 0.1.1

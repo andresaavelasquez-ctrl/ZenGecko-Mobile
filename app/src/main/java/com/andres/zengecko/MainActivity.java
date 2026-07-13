@@ -9,10 +9,13 @@ import android.graphics.Insets;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
 import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -21,12 +24,14 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.content.Context;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 import java.util.List;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoView;
@@ -45,6 +50,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private LinearLayout root;
     private View fixedSidebar;
     private PopupWindow sidebarPopup;
+    private FrameLayout sidebarPanelHost;
     private GeckoSession displayedSession;
     private boolean wideLayout;
     private boolean rendering;
@@ -53,6 +59,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private int safeInsetRight;
     private int safeInsetBottom;
     private String lastSidebarFingerprint = "";
+    private String lastPopupSidebarFingerprint = "";
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -97,7 +104,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     @Override public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        boolean nextWideLayout = newConfig.screenWidthDp >= 720;
+        boolean nextWideLayout = shouldUseFixedSidebar(newConfig);
         Log.i(TAG, "onConfigurationChanged widthDp=" + newConfig.screenWidthDp
                 + " wide=" + nextWideLayout + " previousWide=" + wideLayout);
 
@@ -125,6 +132,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         }
         detachGeckoView();
         lastSidebarFingerprint = "";
+        lastPopupSidebarFingerprint = "";
         buildUi();
     }
 
@@ -160,7 +168,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void buildUi() {
-        wideLayout = getResources().getConfiguration().screenWidthDp >= 720;
+        wideLayout = shouldUseFixedSidebar(getResources().getConfiguration());
         root = new LinearLayout(this);
         root.setOrientation(LinearLayout.HORIZONTAL);
         root.setBackgroundColor(getColor(R.color.zen_bg));
@@ -181,7 +189,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         progressBar.setMax(100);
         progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(getColor(R.color.zen_accent)));
         progressBar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.TRANSPARENT));
-        browserColumn.addView(progressBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(2)));
+        browserColumn.addView(progressBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(3)));
 
         geckoView = new GeckoView(this);
         geckoView.setBackgroundColor(getColor(R.color.zen_bg));
@@ -319,7 +327,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         brand.setTypeface(null, android.graphics.Typeface.BOLD);
         header.addView(brand, new LinearLayout.LayoutParams(0, dp(44), 1f));
         TextView add = navButton("+");
-        add.setOnClickListener(v -> browser.addTab("about:blank", true));
+        add.setOnClickListener(v -> openNewTabFromSidebar());
         header.addView(add, square(40));
         panel.addView(header);
 
@@ -375,62 +383,186 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         boolean active = browser.getActiveTab() != null && browser.getActiveTab().id.equals(tab.id);
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(10), dp(5), dp(6), dp(5));
+        row.setPadding(dp(8), dp(4), dp(4), dp(4));
         row.setBackgroundResource(active ? R.drawable.bg_tab_active : R.drawable.bg_tab_idle);
-        row.setOnClickListener(v -> { browser.selectTab(tab.id); if (sidebarPopup != null) sidebarPopup.dismiss(); });
-        row.setOnLongClickListener(v -> { browser.toggleEssential(tab.id); return true; });
+        row.setOnClickListener(v -> {
+            browser.selectTab(tab.id);
+            dismissSidebarPopup();
+        });
+        row.setOnLongClickListener(v -> {
+            browser.toggleEssential(tab.id);
+            Toast.makeText(this,
+                    tab.essential ? "Pestaña normal" : "Pestaña esencial",
+                    Toast.LENGTH_SHORT).show();
+            return true;
+        });
 
-        TextView icon = text(tab.essential ? "◆" : "●", 11, tab.loading ? R.color.zen_accent : R.color.zen_muted);
+        final float[] gesture = new float[2];
+        row.setOnTouchListener((view, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                gesture[0] = event.getX();
+                gesture[1] = event.getY();
+            } else if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                float dx = event.getX() - gesture[0];
+                float dy = event.getY() - gesture[1];
+                if (Math.abs(dx) > dp(84) && Math.abs(dx) > Math.abs(dy) * 1.5f) {
+                    closeTabFromSidebar(tab.id);
+                    return true;
+                }
+            }
+            return false;
+        });
+
+        TextView icon = text(tab.essential ? "◆" : "●", 11,
+                tab.loading ? R.color.zen_accent : R.color.zen_muted);
         icon.setGravity(Gravity.CENTER);
         row.addView(icon, square(28));
 
         LinearLayout labels = new LinearLayout(this);
         labels.setOrientation(LinearLayout.VERTICAL);
         TextView title = text(tab.title == null ? "Nueva pestaña" : tab.title, 14, R.color.zen_text);
-        title.setSingleLine(true); title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
         TextView url = text(shortUrl(tab.url), 11, R.color.zen_muted);
-        url.setSingleLine(true); url.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        labels.addView(title); labels.addView(url);
-        row.addView(labels, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        url.setSingleLine(true);
+        url.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        labels.addView(title);
+        labels.addView(url);
+        row.addView(labels, new LinearLayout.LayoutParams(0, dp(50), 1f));
 
-        TextView close = text("×", 19, R.color.zen_muted);
+        TextView close = text("×", 24, R.color.zen_text);
         close.setGravity(Gravity.CENTER);
-        close.setOnClickListener(v -> browser.closeTab(tab.id));
-        row.addView(close, square(36));
-        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(58));
+        close.setContentDescription("Cerrar pestaña");
+        close.setFocusable(true);
+        close.setClickable(true);
+        close.setBackgroundResource(R.drawable.bg_close_button);
+        close.setOnClickListener(v -> {
+            v.setEnabled(false);
+            closeTabFromSidebar(tab.id);
+        });
+        row.addView(close, square(48));
+
+        LinearLayout.LayoutParams rp =
+                new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(62));
         rp.setMargins(0, 0, 0, dp(4));
         row.setLayoutParams(rp);
         return row;
     }
 
     private void showSidebarPopup() {
-        if (sidebarPopup != null) sidebarPopup.dismiss();
-        View panel = createSidebar();
+        dismissSidebarPopup();
+
         int availableWidth = Math.max(dp(240),
                 getResources().getDisplayMetrics().widthPixels - safeInsetLeft - safeInsetRight);
-        int width = Math.min(dp(340), (int)(availableWidth * .88f));
+        int panelWidth = Math.min(dp(360), (int) (availableWidth * .88f));
         int measuredHeight = root == null ? 0 : root.getHeight();
         int availableHeight = measuredHeight - safeInsetTop - safeInsetBottom;
         int height = availableHeight > 0 ? availableHeight : ViewGroup.LayoutParams.MATCH_PARENT;
 
-        sidebarPopup = new PopupWindow(panel, width, height, true);
-        sidebarPopup.setBackgroundDrawable(new ColorDrawable(getColor(R.color.zen_surface)));
-        sidebarPopup.setElevation(dp(16));
+        View overlay = createSidebarOverlay(availableWidth, panelWidth);
+        sidebarPopup = new PopupWindow(overlay, availableWidth, height, true);
+        sidebarPopup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        sidebarPopup.setOutsideTouchable(true);
+        sidebarPopup.setClippingEnabled(true);
+        sidebarPopup.setElevation(dp(18));
         sidebarPopup.setAnimationStyle(android.R.style.Animation_Dialog);
+        sidebarPopup.setOnDismissListener(() -> {
+            sidebarPopup = null;
+            sidebarPanelHost = null;
+            lastPopupSidebarFingerprint = "";
+        });
+        lastPopupSidebarFingerprint = sidebarFingerprint();
         sidebarPopup.showAtLocation(root, Gravity.START | Gravity.TOP, safeInsetLeft, safeInsetTop);
+    }
+
+    private View createSidebarOverlay(int availableWidth, int panelWidth) {
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(Color.TRANSPARENT);
+
+        View scrim = new View(this);
+        scrim.setBackgroundColor(0x99000000);
+        scrim.setContentDescription("Cerrar panel");
+        scrim.setOnClickListener(v -> dismissSidebarPopup());
+        overlay.addView(scrim, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        sidebarPanelHost = new FrameLayout(this);
+        FrameLayout.LayoutParams panelParams =
+                new FrameLayout.LayoutParams(panelWidth, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START);
+        sidebarPanelHost.addView(createSidebar(), new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        overlay.addView(sidebarPanelHost, panelParams);
+        return overlay;
+    }
+
+    private void refreshSidebarPopup() {
+        if (sidebarPopup == null || !sidebarPopup.isShowing()) return;
+        if (sidebarPanelHost == null) return;
+        sidebarPanelHost.removeAllViews();
+        sidebarPanelHost.addView(createSidebar(), new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        sidebarPopup.update();
+        lastPopupSidebarFingerprint = sidebarFingerprint();
+    }
+
+    private void dismissSidebarPopup() {
+        if (sidebarPopup != null) sidebarPopup.dismiss();
+    }
+
+    private void openNewTabFromSidebar() {
+        browser.addTab("about:blank", true);
+        dismissSidebarPopup();
+        showKeyboard(addressBar);
+    }
+
+    private void closeTabFromSidebar(String tabId) {
+        browser.closeTab(tabId);
+        Toast.makeText(this, "Pestaña cerrada", Toast.LENGTH_SHORT).show();
+        refreshSidebarPopup();
     }
 
     private void promptWorkspace() {
         EditText input = new EditText(this);
         input.setHint("Nombre del espacio");
         input.setSingleLine(true);
-        int pad = dp(20); input.setPadding(pad, pad, pad, pad);
-        new AlertDialog.Builder(this)
+        input.setTextColor(getColor(R.color.zen_text));
+        input.setHintTextColor(getColor(R.color.zen_muted));
+        input.setBackgroundResource(R.drawable.bg_address);
+        int pad = dp(16);
+        input.setPadding(pad, 0, pad, 0);
+
+        LinearLayout wrapper = new LinearLayout(this);
+        wrapper.setPadding(dp(20), dp(8), dp(20), 0);
+        wrapper.addView(input, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Nuevo espacio")
-                .setView(input)
+                .setView(wrapper)
                 .setNegativeButton("Cancelar", null)
-                .setPositiveButton("Crear", (d, w) -> browser.addWorkspace(input.getText().toString()))
-                .show();
+                .setPositiveButton("Crear", null)
+                .create();
+
+        dialog.setOnShowListener(ignored -> {
+            TextView create = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            create.setEnabled(false);
+            create.setOnClickListener(v -> {
+                String name = input.getText().toString().trim();
+                if (name.isEmpty()) return;
+                browser.addWorkspace(name);
+                dialog.dismiss();
+                refreshSidebarPopup();
+            });
+            input.addTextChangedListener(new TextWatcher() {
+                @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
+                @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
+                    create.setEnabled(value != null && !value.toString().trim().isEmpty());
+                }
+                @Override public void afterTextChanged(Editable value) { }
+            });
+            showKeyboard(input);
+        });
+        dialog.show();
     }
 
     private void render() {
@@ -440,23 +572,29 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             BrowserTab tab = browser.getActiveTab();
             if (tab == null) return;
             attachSession(tab.session);
-            if (!addressBar.hasFocus()) addressBar.setText(tab.url == null ? "" : tab.url);
+            if (!addressBar.hasFocus()) {
+                String visibleUrl = tab.url == null || "about:blank".equals(tab.url) ? "" : tab.url;
+                addressBar.setText(visibleUrl);
+            }
             setEnabled(backButton, tab.canGoBack);
             setEnabled(forwardButton, tab.canGoForward);
             reloadButton.setText(tab.loading ? "×" : "↻");
             progressBar.setVisibility(tab.loading ? View.VISIBLE : View.INVISIBLE);
             progressBar.setProgress(tab.progress);
 
-            if (wideLayout && fixedSidebar != null) {
-                String fingerprint = sidebarFingerprint();
-                if (!fingerprint.equals(lastSidebarFingerprint)) {
-                    int index = root.indexOfChild(fixedSidebar);
-                    View replacement = createSidebar();
-                    root.removeView(fixedSidebar);
-                    root.addView(replacement, index, new LinearLayout.LayoutParams(dp(286), ViewGroup.LayoutParams.MATCH_PARENT));
-                    fixedSidebar = replacement;
-                    lastSidebarFingerprint = fingerprint;
-                }
+            String fingerprint = sidebarFingerprint();
+            if (wideLayout && fixedSidebar != null && !fingerprint.equals(lastSidebarFingerprint)) {
+                int index = root.indexOfChild(fixedSidebar);
+                View replacement = createSidebar();
+                root.removeView(fixedSidebar);
+                root.addView(replacement, index,
+                        new LinearLayout.LayoutParams(dp(286), ViewGroup.LayoutParams.MATCH_PARENT));
+                fixedSidebar = replacement;
+                lastSidebarFingerprint = fingerprint;
+            }
+            if (sidebarPopup != null && sidebarPopup.isShowing()
+                    && !fingerprint.equals(lastPopupSidebarFingerprint)) {
+                refreshSidebarPopup();
             }
         } finally { rendering = false; }
     }
@@ -512,6 +650,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     .append(tab.loading).append(';');
         }
         return value.toString();
+    }
+
+    private boolean shouldUseFixedSidebar(Configuration configuration) {
+        return configuration.smallestScreenWidthDp >= 600 && configuration.screenWidthDp >= 720;
     }
 
     private LinearLayout.LayoutParams square(int sizeDp) { return new LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp)); }
