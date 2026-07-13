@@ -13,6 +13,7 @@ public final class BrowserTab {
     public boolean canGoForward;
     public boolean loading;
     public int progress;
+    public int navigationSerial;
     public GeckoSession session;
 
     public BrowserTab(String id, String workspaceId, String title, String url) {

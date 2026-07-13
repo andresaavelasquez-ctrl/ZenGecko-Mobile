@@ -71,6 +71,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private EditText searchInput;
     private LinearLayout searchResults;
     private View searchAnimatedPanel;
+    private PopupWindow searchEnginePopup;
+    private TextView searchEngineButton;
     private TextView addressDisplay;
     private ImageButton backButton;
     private ImageButton forwardButton;
@@ -80,6 +82,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private boolean wideLayout;
     private boolean rendering;
     private boolean tabTransitionRunning;
+    private int transitionGeneration;
+    private String lastPaintCoverKey = "";
     private int safeInsetLeft;
     private int safeInsetTop;
     private int safeInsetRight;
@@ -137,6 +141,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     @Override public void onBackPressed() {
+        if (searchEnginePopup != null && searchEnginePopup.isShowing()) {
+            dismissSearchEnginePopup();
+            return;
+        }
         if (searchPopup != null && searchPopup.isShowing()) {
             dismissSearchPopup();
             return;
@@ -165,6 +173,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     private void detachGeckoView() {
         displayedSession = null;
+        lastPaintCoverKey = "";
         if (geckoView == null) return;
         try {
             GeckoSession released = geckoView.releaseSession();
@@ -178,6 +187,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         if (session == null || geckoView == null || displayedSession == session) return;
         detachGeckoView();
         try {
+            geckoView.coverUntilFirstPaint(getColor(R.color.zen_bg));
             geckoView.setSession(session);
             displayedSession = session;
             Log.d(TAG, "Attached GeckoSession to GeckoView");
@@ -361,7 +371,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private View createNewTabSurface() {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundColor(getColor(R.color.zen_bg));
+        scroll.setBackgroundResource(R.drawable.bg_new_tab_gradient);
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
@@ -752,9 +762,6 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         LinearLayout searchBar = new LinearLayout(this);
         searchBar.setGravity(Gravity.CENTER_VERTICAL);
-        ImageButton closeSearch = iconButton(R.drawable.ic_back, "Cerrar búsqueda");
-        closeSearch.setOnClickListener(v -> dismissSearchPopup());
-        searchBar.addView(closeSearch, square(44));
 
         searchInput = new EditText(this);
         searchInput.setSingleLine(true);
@@ -763,19 +770,19 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         searchInput.setTextSize(16);
         searchInput.setHint("Buscar o escribir una dirección");
         searchInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        searchInput.setImeOptions(EditorInfo.IME_ACTION_GO);
+        searchInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         searchInput.setBackgroundResource(R.drawable.bg_address);
         searchInput.setPadding(dp(16), 0, dp(16), 0);
         String initial = newTabMode ? "" : activeUrlForEditing();
         searchInput.setText(initial);
         if (!initial.isEmpty()) searchInput.setSelection(0, initial.length());
         LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(0, dp(46), 1f);
-        inputParams.setMargins(dp(4), 0, dp(4), 0);
+        inputParams.setMargins(0, 0, dp(7), 0);
         searchBar.addView(searchInput, inputParams);
 
-        ImageButton go = iconButton(R.drawable.ic_go, "Ir");
-        go.setOnClickListener(v -> submitSearch(searchInput.getText().toString()));
-        searchBar.addView(go, square(44));
+        searchEngineButton = createSearchEngineButton();
+        searchEngineButton.setOnClickListener(v -> showSearchEngineMenu(searchEngineButton));
+        searchBar.addView(searchEngineButton, square(46));
         panel.addView(searchBar);
 
         ScrollView resultsScroll = new ScrollView(this);
@@ -801,10 +808,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         searchPopup.setClippingEnabled(true);
         searchPopup.setElevation(dp(24));
         searchPopup.setOnDismissListener(() -> {
+            dismissSearchEnginePopupImmediate();
             searchPopup = null;
             searchInput = null;
             searchResults = null;
             searchAnimatedPanel = null;
+            searchEngineButton = null;
         });
         searchPopup.showAtLocation(appRoot, Gravity.START | Gravity.TOP, safeInsetLeft, safeInsetTop);
 
@@ -833,6 +842,109 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         panel.animate().alpha(1f).translationY(0f).setDuration(190)
                 .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
         showKeyboard(searchInput);
+    }
+
+    private TextView createSearchEngineButton() {
+        SearchEngine engine = browser.getSearchEngine();
+        TextView button = text(engine.mark, 15, R.color.zen_text);
+        button.setTypeface(Typeface.DEFAULT_BOLD);
+        button.setGravity(Gravity.CENTER);
+        button.setBackgroundResource(R.drawable.bg_button);
+        button.setContentDescription("Motor de búsqueda: " + engine.displayName);
+        button.setFocusable(true);
+        button.setClickable(true);
+        return button;
+    }
+
+    private void updateSearchEngineButton() {
+        if (searchEngineButton == null) return;
+        SearchEngine engine = browser.getSearchEngine();
+        searchEngineButton.setText(engine.mark);
+        searchEngineButton.setContentDescription("Motor de búsqueda: " + engine.displayName);
+    }
+
+    private void showSearchEngineMenu(View anchor) {
+        dismissSearchEnginePopupImmediate();
+        if (anchor == null || appRoot == null) return;
+
+        LinearLayout menu = new LinearLayout(this);
+        menu.setOrientation(LinearLayout.VERTICAL);
+        menu.setPadding(dp(10), dp(10), dp(10), dp(10));
+        menu.setBackgroundResource(R.drawable.bg_search_panel);
+
+        TextView heading = label("MOTOR DE BÚSQUEDA");
+        menu.addView(heading, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        for (SearchEngine engine : SearchEngine.values()) {
+            menu.addView(searchEngineRow(engine), new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+        }
+
+        int menuWidth = dp(248);
+        searchEnginePopup = new PopupWindow(
+                menu, menuWidth, ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        searchEnginePopup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        searchEnginePopup.setOutsideTouchable(true);
+        searchEnginePopup.setClippingEnabled(true);
+        searchEnginePopup.setElevation(dp(24));
+        searchEnginePopup.setOnDismissListener(() -> searchEnginePopup = null);
+
+        int[] location = new int[2];
+        anchor.getLocationOnScreen(location);
+        int x = Math.max(safeInsetLeft + dp(8),
+                location[0] + anchor.getWidth() - menuWidth);
+        int y = location[1] + anchor.getHeight() + dp(6);
+        searchEnginePopup.showAtLocation(appRoot, Gravity.TOP | Gravity.START, x, y);
+    }
+
+    private View searchEngineRow(SearchEngine engine) {
+        boolean selected = engine == browser.getSearchEngine();
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(8), 0, dp(8), 0);
+        row.setBackgroundResource(selected
+                ? R.drawable.bg_tab_active : R.drawable.bg_search_result);
+
+        TextView mark = text(engine.mark, 14, R.color.zen_text);
+        mark.setTypeface(Typeface.DEFAULT_BOLD);
+        mark.setGravity(Gravity.CENTER);
+        mark.setBackgroundResource(R.drawable.bg_favicon);
+        row.addView(mark, square(34));
+
+        TextView name = text(engine.displayName, 14,
+                selected ? R.color.zen_text : R.color.zen_muted);
+        name.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams nameParams =
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+        nameParams.setMargins(dp(10), 0, dp(4), 0);
+        row.addView(name, nameParams);
+
+        if (selected) {
+            TextView check = text("✓", 16, R.color.zen_accent);
+            check.setTypeface(Typeface.DEFAULT_BOLD);
+            check.setGravity(Gravity.CENTER);
+            row.addView(check, square(32));
+        }
+
+        row.setOnClickListener(v -> {
+            browser.setSearchEngine(engine);
+            updateSearchEngineButton();
+            dismissSearchEnginePopup();
+            refreshSearchResults(searchInput == null ? "" : searchInput.getText().toString());
+        });
+        return row;
+    }
+
+    private void dismissSearchEnginePopup() {
+        if (searchEnginePopup != null && searchEnginePopup.isShowing()) {
+            searchEnginePopup.dismiss();
+        }
+    }
+
+    private void dismissSearchEnginePopupImmediate() {
+        if (searchEnginePopup != null) searchEnginePopup.dismiss();
+        searchEnginePopup = null;
     }
 
     private void refreshSearchResults(String rawQuery) {
@@ -879,7 +991,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         if (!query.isEmpty()) {
             searchResults.addView(label("IR A"));
             String subtitle = query.contains(".") && !query.contains(" ")
-                    ? browser.normalizeInput(query) : "Buscar en DuckDuckGo";
+                    ? browser.normalizeInput(query)
+                    : "Buscar en " + browser.getSearchEngine().displayName;
             searchResults.addView(searchResultRow(
                     "Buscar “" + query + "”", subtitle, "↗", () -> submitSearch(query)));
         } else if (matchingTabs.isEmpty() && recentCount == 0) {
@@ -936,6 +1049,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void dismissSearchPopup() {
+        dismissSearchEnginePopupImmediate();
         PopupWindow popup = searchPopup;
         if (popup == null || !popup.isShowing()) return;
         hideKeyboard(searchInput);
@@ -949,6 +1063,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void dismissSearchPopupImmediate() {
+        dismissSearchEnginePopupImmediate();
         if (searchPopup != null) searchPopup.dismiss();
         searchPopup = null;
         searchInput = null;
@@ -1007,6 +1122,17 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             return;
         }
         tabTransitionRunning = true;
+        final int generation = ++transitionGeneration;
+        mainHandler.postDelayed(() -> {
+            if (tabTransitionRunning && generation == transitionGeneration
+                    && transitionScrim != null) {
+                Log.w(TAG, "Transition safety reset");
+                transitionScrim.animate().cancel();
+                transitionScrim.setAlpha(0f);
+                transitionScrim.setVisibility(View.GONE);
+                tabTransitionRunning = false;
+            }
+        }, 900L);
         transitionScrim.animate().cancel();
         transitionScrim.setVisibility(View.VISIBLE);
         transitionScrim.setAlpha(0f);
@@ -1076,6 +1202,13 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             BrowserTab tab = browser.getActiveTab();
             if (tab == null) return;
             attachSession(tab.session);
+            String paintCoverKey = tab.id + ":" + tab.navigationSerial;
+            if (tab.loading && tab.navigationSerial > 0
+                    && !paintCoverKey.equals(lastPaintCoverKey)) {
+                geckoView.coverUntilFirstPaint(getColor(R.color.zen_bg));
+                geckoView.invalidate();
+                lastPaintCoverKey = paintCoverKey;
+            }
             boolean newTab = tab.url == null || "about:blank".equals(tab.url);
             newTabSurface.setVisibility(newTab ? View.VISIBLE : View.GONE);
             addressDisplay.setText(newTab ? "Nueva pestaña" : displayHost(tab.url));

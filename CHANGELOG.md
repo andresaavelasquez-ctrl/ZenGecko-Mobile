@@ -37,3 +37,12 @@
 ## 0.1.0
 
 - Initial GeckoView browser prototype with tabs and workspaces.
+
+## 0.1.5 — Compact Search
+
+- Fondo degradado estático en la página de nueva pestaña.
+- Selector persistente para DuckDuckGo, Perplexity, Brave Search y Google.
+- Eliminación de las flechas laterales redundantes de la paleta de búsqueda.
+- DuckDuckGo continúa como motor predeterminado.
+- Cobertura hasta la primera pintura de GeckoView para evitar páginas grises.
+- Protección de seguridad para que la capa de transición nunca quede bloqueada.

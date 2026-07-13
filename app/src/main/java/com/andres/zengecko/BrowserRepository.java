@@ -21,6 +21,7 @@ public final class BrowserRepository {
 
     private static final String PREFS = "browser_state";
     private static final String KEY_STATE = "state_v1";
+    private static final String KEY_SEARCH_ENGINE = "search_engine";
     private static final int MAX_RECENT_URLS = 14;
     private static BrowserRepository instance;
 
@@ -50,11 +51,14 @@ public final class BrowserRepository {
     private final List<Observer> observers = new ArrayList<>();
     private String activeWorkspaceId;
     private String activeTabId;
+    private SearchEngine searchEngine = SearchEngine.DUCKDUCKGO;
     private ClosedTab lastClosedTab;
 
     private BrowserRepository(Context context) {
         this.context = context.getApplicationContext();
         this.preferences = this.context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        this.searchEngine = SearchEngine.fromId(
+                this.preferences.getString(KEY_SEARCH_ENGINE, SearchEngine.DUCKDUCKGO.id));
         load();
     }
 
@@ -74,7 +78,16 @@ public final class BrowserRepository {
     public List<String> getRecentUrls() { return Collections.unmodifiableList(recentUrls); }
     public String getActiveWorkspaceId() { return activeWorkspaceId; }
     public String getActiveTabId() { return activeTabId; }
+    public SearchEngine getSearchEngine() { return searchEngine; }
     public boolean canRestoreLastClosedTab() { return lastClosedTab != null; }
+
+    public void setSearchEngine(SearchEngine engine) {
+        SearchEngine next = engine == null ? SearchEngine.DUCKDUCKGO : engine;
+        if (next == searchEngine) return;
+        searchEngine = next;
+        preferences.edit().putString(KEY_SEARCH_ENGINE, next.id).apply();
+        notifyObservers();
+    }
 
     public BrowserTab getActiveTab() {
         for (BrowserTab tab : tabs) if (tab.id.equals(activeTabId)) return tab;
@@ -209,7 +222,7 @@ public final class BrowserRepository {
         Uri parsed = Uri.parse(value);
         if (parsed.getScheme() != null) return value;
         if (value.contains(".") && !value.contains(" ")) return "https://" + value;
-        return "https://duckduckgo.com/?q=" + Uri.encode(value);
+        return searchEngine.buildSearchUrl(value);
     }
 
     private BrowserTab addTabInternal(String url, boolean select, boolean load) {
@@ -270,6 +283,7 @@ public final class BrowserRepository {
 
         session.setProgressDelegate(new GeckoSession.ProgressDelegate() {
             @Override public void onPageStart(GeckoSession ignored, String url) {
+                tab.navigationSerial++;
                 tab.loading = true;
                 tab.progress = 5;
                 tab.url = url;
