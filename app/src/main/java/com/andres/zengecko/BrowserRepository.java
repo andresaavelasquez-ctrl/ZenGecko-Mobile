@@ -22,6 +22,7 @@ public final class BrowserRepository {
         void onBrowserStateChanged();
         default void onFullScreenChanged(GeckoSession session, boolean fullScreen) { }
         default void onDownloadRequested(WebResponse response) { }
+        default void onPageFinished(GeckoSession session, boolean success) { }
     }
 
     private static final String PREFS = "browser_state";
@@ -99,12 +100,41 @@ public final class BrowserRepository {
         notifyObservers();
     }
 
+    public String getActiveWorkspaceName() {
+        Workspace workspace = findWorkspace(activeWorkspaceId);
+        return workspace == null ? "Personal" : workspace.name;
+    }
+
+    public boolean selectPreviousTab() {
+        List<BrowserTab> visible = getVisibleTabs();
+        if (visible.size() <= 1) return false;
+        int index = -1;
+        for (int i = 0; i < visible.size(); i++) {
+            if (visible.get(i).id.equals(activeTabId)) {
+                index = i;
+                break;
+            }
+        }
+        int previous = index <= 0 ? visible.size() - 1 : index - 1;
+        BrowserTab target = visible.get(previous);
+        activeTabId = target.id;
+        ensureSession(target, true);
+        persistAndNotify();
+        return true;
+    }
+
     public BrowserTab getActiveTab() {
         for (BrowserTab tab : tabs) if (tab.id.equals(activeTabId)) return tab;
         return tabs.isEmpty() ? null : tabs.get(0);
     }
 
-    public List<BrowserTab> getVisibleTabs() { return new ArrayList<>(tabs); }
+    public List<BrowserTab> getVisibleTabs() {
+        List<BrowserTab> visible = new ArrayList<>();
+        for (BrowserTab tab : tabs) {
+            if (tab.workspaceId.equals(activeWorkspaceId)) visible.add(tab);
+        }
+        return visible;
+    }
 
     public BrowserTab addTab(String rawUrl, boolean select) {
         String url = normalizeInput(rawUrl);
@@ -119,7 +149,7 @@ public final class BrowserRepository {
     public void selectTab(String tabId) {
         BrowserTab tab = findTab(tabId);
         if (tab == null) return;
-        if (!tab.essential) activeWorkspaceId = tab.workspaceId;
+        activeWorkspaceId = tab.workspaceId;
         activeTabId = tab.id;
         ensureSession(tab, true);
         persistAndNotify();
@@ -136,15 +166,13 @@ public final class BrowserRepository {
         if (closing.session != null) closing.session.close();
         tabs.remove(closing);
 
-        if (tabs.isEmpty()) {
-            BrowserTab replacement = addTabInternal("about:blank", false, true);
-            activeTabId = replacement.id;
-        } else if (closingActive) {
+        if (closingActive) {
             BrowserTab replacement = nearestVisibleTab(closingIndex);
             if (replacement == null) replacement = firstVisibleTab();
-            if (replacement == null) replacement = tabs.get(Math.min(closingIndex, tabs.size() - 1));
+            if (replacement == null) {
+                replacement = addTabInternal("about:blank", false, true);
+            }
             activeTabId = replacement.id;
-            if (!replacement.essential) activeWorkspaceId = replacement.workspaceId;
             ensureSession(replacement, true);
         }
         persistAndNotify();
@@ -179,11 +207,10 @@ public final class BrowserRepository {
     public void switchWorkspace(String workspaceId) {
         if (findWorkspace(workspaceId) == null) return;
         activeWorkspaceId = workspaceId;
-        BrowserTab candidate = null;
-        for (BrowserTab tab : tabs) {
-            if (tab.workspaceId.equals(workspaceId) && !tab.essential) { candidate = tab; break; }
+        BrowserTab candidate = firstVisibleTab();
+        if (candidate == null) {
+            candidate = addTabInternal("about:blank", false, true);
         }
-        if (candidate == null) candidate = addTabInternal("about:blank", false, true);
         activeTabId = candidate.id;
         ensureSession(candidate, true);
         persistAndNotify();
@@ -306,11 +333,13 @@ public final class BrowserRepository {
                     notifyObservers();
                 }
             }
-            @Override public void onPageStop(GeckoSession ignored, boolean success) {
+            @Override public void onPageStop(GeckoSession source, boolean success) {
                 tab.loading = false;
                 tab.progress = 100;
                 recordRecentUrl(tab.url);
+                if (success) HistoryStore.record(context, tab.title, tab.url);
                 persistAndNotify();
+                notifyPageFinished(source, success);
             }
         });
 
@@ -318,8 +347,10 @@ public final class BrowserRepository {
             @Override public GeckoResult<Integer> onContentPermissionRequest(
                     GeckoSession ignored, GeckoSession.PermissionDelegate.ContentPermission permission) {
                 int type = permission.permission;
-                boolean safeDefault = type == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE
-                        || type == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE
+                boolean autoplay = ZenPanelController.autoplayEnabled(context)
+                        && (type == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE
+                        || type == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE);
+                boolean safeDefault = autoplay
                         || type == GeckoSession.PermissionDelegate.PERMISSION_PERSISTENT_STORAGE;
                 return GeckoResult.fromValue(safeDefault
                         ? GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
@@ -344,19 +375,21 @@ public final class BrowserRepository {
             int left = formerIndex - 1 - distance;
             if (left >= 0) {
                 BrowserTab candidate = tabs.get(left);
-                return candidate;
+                if (candidate.workspaceId.equals(activeWorkspaceId)) return candidate;
             }
             int right = formerIndex - distance;
             if (right >= 0 && right < tabs.size()) {
                 BrowserTab candidate = tabs.get(right);
-                return candidate;
+                if (candidate.workspaceId.equals(activeWorkspaceId)) return candidate;
             }
         }
         return null;
     }
 
     private BrowserTab firstVisibleTab() {
-        for (BrowserTab tab : tabs) return tab;
+        for (BrowserTab tab : tabs) {
+            if (tab.workspaceId.equals(activeWorkspaceId)) return tab;
+        }
         return null;
     }
 
@@ -387,46 +420,84 @@ public final class BrowserRepository {
 
     private void load() {
         String raw = preferences.getString(KEY_STATE, null);
-        if (raw != null) {
+        if (raw != null && ZenPanelController.restoreSessionEnabled(context)) {
             try {
                 JSONObject state = new JSONObject(raw);
                 JSONArray ws = state.optJSONArray("workspaces");
-                if (ws != null) for (int i = 0; i < ws.length(); i++) {
-                    JSONObject item = ws.getJSONObject(i);
-                    workspaces.add(new Workspace(item.getString("id"), item.getString("name")));
+                if (ws != null) {
+                    for (int i = 0; i < ws.length(); i++) {
+                        JSONObject item = ws.getJSONObject(i);
+                        workspaces.add(new Workspace(
+                                item.getString("id"),
+                                item.getString("name")));
+                    }
                 }
                 JSONArray savedTabs = state.optJSONArray("tabs");
-                if (savedTabs != null) for (int i = 0; i < savedTabs.length(); i++) {
-                    JSONObject item = savedTabs.getJSONObject(i);
-                    BrowserTab tab = new BrowserTab(item.getString("id"), item.getString("workspaceId"),
-                            item.optString("title", "Nueva pestaña"), item.optString("url", "about:blank"));
-                    tab.pinned = item.optBoolean("pinned", false);
-                    tab.essential = item.optBoolean("essential", false);
-                    tabs.add(tab);
+                if (savedTabs != null) {
+                    for (int i = 0; i < savedTabs.length(); i++) {
+                        JSONObject item = savedTabs.getJSONObject(i);
+                        BrowserTab tab = new BrowserTab(
+                                item.getString("id"),
+                                item.optString("workspaceId", "personal"),
+                                item.optString("title", "Nueva pestaña"),
+                                item.optString("url", "about:blank"));
+                        tab.pinned = item.optBoolean("pinned", false);
+                        tab.essential = item.optBoolean("essential", false);
+                        tabs.add(tab);
+                    }
                 }
                 JSONArray recent = state.optJSONArray("recentUrls");
-                if (recent != null) for (int i = 0; i < recent.length() && i < MAX_RECENT_URLS; i++) {
-                    String url = recent.optString(i, null);
-                    if (url != null && !url.trim().isEmpty()) recentUrls.add(url);
+                if (recent != null) {
+                    for (int i = 0;
+                            i < recent.length() && i < MAX_RECENT_URLS;
+                            i++) {
+                        String url = recent.optString(i, null);
+                        if (url != null && !url.trim().isEmpty()) recentUrls.add(url);
+                    }
                 }
-                activeWorkspaceId = state.optString("activeWorkspaceId", null);
+                activeWorkspaceId = state.optString("activeWorkspaceId", "personal");
                 activeTabId = state.optString("activeTabId", null);
             } catch (JSONException ignored) {
-                workspaces.clear(); tabs.clear(); recentUrls.clear();
+                workspaces.clear();
+                tabs.clear();
+                recentUrls.clear();
             }
         }
-        workspaces.clear();
-        workspaces.add(new Workspace("personal", "Personal"));
-        activeWorkspaceId = "personal";
-        for (BrowserTab tab : tabs) tab.workspaceId = activeWorkspaceId;
-        if (tabs.isEmpty()) {
-            BrowserTab start = new BrowserTab(UUID.randomUUID().toString(), activeWorkspaceId, "Nueva pestaña", "about:blank");
-            tabs.add(start); activeTabId = start.id;
+
+        ensureDefaultWorkspace("personal", "Personal");
+        ensureDefaultWorkspace("work", "Trabajo");
+        ensureDefaultWorkspace("education", "Educación");
+
+        if (findWorkspace(activeWorkspaceId) == null) activeWorkspaceId = "personal";
+        for (BrowserTab tab : tabs) {
+            if (findWorkspace(tab.workspaceId) == null) tab.workspaceId = "personal";
         }
+
+        if (tabs.isEmpty()) {
+            BrowserTab start = new BrowserTab(
+                    UUID.randomUUID().toString(),
+                    "personal",
+                    "Nueva pestaña",
+                    "about:blank");
+            tabs.add(start);
+            activeWorkspaceId = "personal";
+            activeTabId = start.id;
+        }
+
         BrowserTab active = findTab(activeTabId);
-        if (active == null) { active = firstVisibleTab(); activeTabId = active == null ? tabs.get(0).id : active.id; }
-        ensureSession(getActiveTab(), true);
+        if (active == null || !active.workspaceId.equals(activeWorkspaceId)) {
+            active = firstVisibleTab();
+        }
+        if (active == null) {
+            active = addTabInternal("about:blank", false, false);
+        }
+        activeTabId = active.id;
+        ensureSession(active, true);
         persist();
+    }
+
+    private void ensureDefaultWorkspace(String id, String name) {
+        if (findWorkspace(id) == null) workspaces.add(new Workspace(id, name));
     }
 
     private void persistAndNotify() { persist(); notifyObservers(); }
@@ -456,6 +527,11 @@ public final class BrowserRepository {
         for (Observer observer : copy) observer.onBrowserStateChanged();
     }
 
+
+    private void notifyPageFinished(GeckoSession session, boolean success) {
+        List<Observer> copy = new ArrayList<>(observers);
+        for (Observer observer : copy) observer.onPageFinished(session, success);
+    }
 
     private void notifyDownload(WebResponse response) {
         List<Observer> copy = new ArrayList<>(observers);

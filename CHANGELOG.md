@@ -92,3 +92,17 @@
 - Perfiles locales desplegables.
 - Menor reconstrucción durante el progreso de carga.
 - README actualizado automáticamente.
+
+## 0.1.10 — Navigation, History & Settings
+
+- Favoritos reemplaza a Esenciales.
+- Historial con búsqueda y papelera.
+- Botón Atrás navega páginas y pestañas antes de confirmar la salida.
+- Espacios Personal, Trabajo y Educación restaurados.
+- Barra de dirección visible en páginas y más redondeada.
+- Menú lateral sin buscador, con logo, nombre e Inicio.
+- Paneles secundarios vuelven al menú principal.
+- Aviso visual mejorado para descargas.
+- Corrección de superficies negras de GeckoView.
+- Nombre e icono actualizados a Zen Browser.
+- Motor de búsqueda desplegable y más de veinte configuraciones reales.

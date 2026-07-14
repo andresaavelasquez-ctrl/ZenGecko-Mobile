@@ -166,7 +166,7 @@ public final class DownloadStore {
             values.put(MediaStore.MediaColumns.DISPLAY_NAME, record.name);
             values.put(MediaStore.MediaColumns.MIME_TYPE, record.mime);
             values.put(MediaStore.MediaColumns.RELATIVE_PATH,
-                    Environment.DIRECTORY_DOWNLOADS + "/ZenGecko");
+                    Environment.DIRECTORY_DOWNLOADS + "/ZenBrowser");
             values.put(MediaStore.MediaColumns.IS_PENDING, 1);
             target = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
             if (target == null) throw new IllegalStateException("Android no creó el archivo");
@@ -215,13 +215,13 @@ public final class DownloadStore {
             DownloadManager manager = (DownloadManager) app.getSystemService(Context.DOWNLOAD_SERVICE);
             DownloadManager.Request request = new DownloadManager.Request(Uri.parse(record.source));
             request.setTitle(record.name);
-            request.setDescription("Descarga de ZenGecko");
+            request.setDescription("Descarga de Zen Browser");
             request.setNotificationVisibility(
                     DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             request.setAllowedOverMetered(ZenPanelController.downloadsAllowedOnMetered(app));
             request.setAllowedOverRoaming(false);
             request.setDestinationInExternalPublicDir(
-                    Environment.DIRECTORY_DOWNLOADS, "ZenGecko/" + record.name);
+                    Environment.DIRECTORY_DOWNLOADS, "ZenBrowser/" + record.name);
             if (record.mime != null && !record.mime.isEmpty()) request.setMimeType(record.mime);
             record.systemId = manager.enqueue(request);
             record.status = DOWNLOADING;

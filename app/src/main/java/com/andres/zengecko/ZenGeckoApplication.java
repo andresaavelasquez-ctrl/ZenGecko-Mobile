@@ -13,7 +13,7 @@ public final class ZenGeckoApplication extends Application {
     public static synchronized GeckoRuntime runtime(Context context) {
         if (runtime == null) {
             GeckoRuntimeSettings settings = new GeckoRuntimeSettings.Builder()
-                    .javaScriptEnabled(true)
+                    .javaScriptEnabled(ZenPanelController.javaScriptEnabled(context))
                     .remoteDebuggingEnabled(BuildConfig.DEBUG)
                     .consoleOutput(BuildConfig.DEBUG)
                     .debugLogging(BuildConfig.DEBUG)
