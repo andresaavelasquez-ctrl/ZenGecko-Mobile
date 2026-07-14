@@ -28,6 +28,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -58,6 +59,9 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private BrowserRepository browser;
     private FrameLayout appRoot;
     private LinearLayout root;
+    private LinearLayout browserColumn;
+    private View toolbarView;
+    private ImageButton sidebarButton;
     private FrameLayout webHost;
     private GeckoView geckoView;
     private View newTabSurface;
@@ -83,6 +87,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private boolean wideLayout;
     private boolean rendering;
     private boolean tabTransitionRunning;
+    private boolean contentFullScreen;
+    private boolean manualFullScreen;
     private int transitionGeneration;
     private String lastPaintCoverKey = "";
     private int safeInsetLeft;
@@ -95,8 +101,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         Window window = getWindow();
-        window.setStatusBarColor(getColor(R.color.zen_bg));
-        window.setNavigationBarColor(getColor(R.color.zen_bg));
+        configureEdgeToEdge(window);
 
         Log.i(TAG, "onCreate; widthDp=" + getResources().getConfiguration().screenWidthDp);
         browser = BrowserRepository.get(this);
@@ -113,6 +118,14 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     @Override protected void onStart() {
         super.onStart();
         setCurrentSessionActive(true);
+        recoverVisibleSurface();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        setCurrentSessionActive(true);
+        recoverVisibleSurface();
+        if (isImmersiveMode()) mainHandler.postDelayed(() -> applySystemBars(true), 60L);
     }
 
     @Override protected void onStop() {
@@ -131,17 +144,38 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     @Override public void onBrowserStateChanged() { runOnUiThread(this::render); }
 
+    @Override public void onFullScreenChanged(GeckoSession session, boolean fullScreen) {
+        runOnUiThread(() -> {
+            BrowserTab active = browser == null ? null : browser.getActiveTab();
+            if (active == null || active.session != session) return;
+            contentFullScreen = fullScreen;
+            if (fullScreen) manualFullScreen = false;
+            applyImmersiveState();
+        });
+    }
+
     @Override public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        boolean nextWideLayout = shouldUseFixedSidebar(newConfig);
         Log.i(TAG, "onConfigurationChanged widthDp=" + newConfig.screenWidthDp
-                + " wide=" + nextWideLayout + " previousWide=" + wideLayout);
-        if (nextWideLayout != wideLayout) rebuildUiPreservingSession();
+                + " previousWide=" + wideLayout);
+        applyResponsiveLayout(newConfig);
         if (appRoot != null) appRoot.requestApplyInsets();
+        recoverVisibleSurface();
         render();
     }
 
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && isImmersiveMode()) {
+            mainHandler.postDelayed(() -> applySystemBars(true), 80L);
+        }
+    }
+
     @Override public void onBackPressed() {
+        if (isImmersiveMode()) {
+            exitImmersiveMode();
+            return;
+        }
         if (searchEnginePopup != null && searchEnginePopup.isShowing()) {
             dismissSearchEnginePopup();
             return;
@@ -163,13 +197,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void rebuildUiPreservingSession() {
-        Log.i(TAG, "Rebuilding UI while preserving GeckoSession");
-        dismissSearchPopupImmediate();
-        dismissSidebarPopupImmediate();
-        detachGeckoView();
-        lastSidebarFingerprint = "";
-        lastPopupSidebarFingerprint = "";
-        buildUi();
+        applyResponsiveLayout(getResources().getConfiguration());
     }
 
     private void detachGeckoView() {
@@ -217,20 +245,18 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         appRoot.addView(root, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        if (wideLayout) {
-            fixedSidebar = createCompactRail();
-            root.addView(fixedSidebar, new LinearLayout.LayoutParams(
-                    dp(64), ViewGroup.LayoutParams.MATCH_PARENT));
-        } else {
-            fixedSidebar = null;
-        }
+        fixedSidebar = createCompactRail();
+        root.addView(fixedSidebar, new LinearLayout.LayoutParams(
+                dp(58), ViewGroup.LayoutParams.MATCH_PARENT));
 
-        LinearLayout browserColumn = new LinearLayout(this);
+        browserColumn = new LinearLayout(this);
         browserColumn.setOrientation(LinearLayout.VERTICAL);
         browserColumn.setBackgroundColor(Color.TRANSPARENT);
-        root.addView(browserColumn, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        root.addView(browserColumn, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
 
-        browserColumn.addView(createToolbar(), new LinearLayout.LayoutParams(
+        toolbarView = createToolbar();
+        browserColumn.addView(toolbarView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
 
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -242,11 +268,9 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         webHost = new FrameLayout(this);
         webHost.setBackgroundResource(R.drawable.bg_web_frame);
-        webHost.setElevation(dp(3));
-        LinearLayout.LayoutParams webParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-        webParams.setMargins(dp(6), 0, dp(6), dp(6));
-        browserColumn.addView(webHost, webParams);
+        webHost.setElevation(dp(2));
+        browserColumn.addView(webHost, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         geckoView = new GeckoView(this);
         geckoView.setBackgroundColor(getColor(R.color.zen_bg));
@@ -265,10 +289,154 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         webHost.addView(transitionScrim, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        if (!wideLayout) installEdgeGestureHandle();
-
+        installEdgeGestureHandle();
         setContentView(appRoot);
         installSafeAreaInsets();
+        applyResponsiveLayout(getResources().getConfiguration());
+    }
+
+    private void configureEdgeToEdge(Window window) {
+        window.setStatusBarColor(Color.TRANSPARENT);
+        window.setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            WindowManager.LayoutParams attributes = window.getAttributes();
+            attributes.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            window.setAttributes(attributes);
+            window.setNavigationBarDividerColor(Color.TRANSPARENT);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(false);
+        } else {
+            window.getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
+    }
+
+    private boolean isImmersiveMode() {
+        return contentFullScreen || manualFullScreen;
+    }
+
+    private void enterManualFullScreen() {
+        if (contentFullScreen) return;
+        manualFullScreen = true;
+        applyImmersiveState();
+    }
+
+    private void exitImmersiveMode() {
+        BrowserTab active = browser == null ? null : browser.getActiveTab();
+        if (contentFullScreen && active != null && active.session != null) {
+            try {
+                active.session.exitFullScreen();
+            } catch (RuntimeException error) {
+                Log.w(TAG, "Unable to request content fullscreen exit", error);
+            }
+        }
+        contentFullScreen = false;
+        manualFullScreen = false;
+        applyImmersiveState();
+    }
+
+    private void applyImmersiveState() {
+        boolean immersive = isImmersiveMode();
+        if (immersive) {
+            dismissSearchPopupImmediate();
+            dismissSidebarPopupImmediate();
+        }
+        applySystemBars(immersive);
+        applyResponsiveLayout(getResources().getConfiguration());
+        if (appRoot != null) appRoot.requestApplyInsets();
+        recoverVisibleSurface();
+    }
+
+    private void applySystemBars(boolean hide) {
+        Window window = getWindow();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowInsetsController controller = window.getInsetsController();
+            if (controller != null) {
+                controller.setSystemBarsBehavior(
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                if (hide) controller.hide(WindowInsets.Type.systemBars());
+                else controller.show(WindowInsets.Type.systemBars());
+            }
+        } else {
+            int layoutFlags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+            if (hide) {
+                layoutFlags |= View.SYSTEM_UI_FLAG_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+            }
+            window.getDecorView().setSystemUiVisibility(layoutFlags);
+        }
+    }
+
+    private void applyResponsiveLayout(Configuration configuration) {
+        if (root == null) return;
+        wideLayout = shouldUseFixedSidebar(configuration);
+        boolean immersive = isImmersiveMode();
+        boolean showRail = wideLayout && !immersive;
+
+        if (fixedSidebar != null) {
+            fixedSidebar.setVisibility(showRail ? View.VISIBLE : View.GONE);
+            ViewGroup.LayoutParams raw = fixedSidebar.getLayoutParams();
+            if (raw instanceof LinearLayout.LayoutParams) {
+                LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) raw;
+                params.width = showRail ? dp(58) : 0;
+                fixedSidebar.setLayoutParams(params);
+            }
+        }
+        if (sidebarButton != null) {
+            sidebarButton.setVisibility(!wideLayout && !immersive ? View.VISIBLE : View.GONE);
+        }
+        if (edgeGestureHandle != null) {
+            edgeGestureHandle.setVisibility(!wideLayout && !immersive ? View.VISIBLE : View.GONE);
+        }
+        if (toolbarView != null) {
+            toolbarView.setVisibility(immersive ? View.GONE : View.VISIBLE);
+        }
+        if (progressBar != null && immersive) {
+            progressBar.setVisibility(View.GONE);
+        }
+
+        if (webHost != null && webHost.getLayoutParams() instanceof LinearLayout.LayoutParams) {
+            LinearLayout.LayoutParams params =
+                    (LinearLayout.LayoutParams) webHost.getLayoutParams();
+            if (immersive) params.setMargins(0, 0, 0, 0);
+            else params.setMargins(dp(6), 0, dp(6), dp(6));
+            webHost.setLayoutParams(params);
+            webHost.setElevation(immersive ? 0f : dp(2));
+            webHost.setBackgroundColor(immersive ? getColor(R.color.zen_bg) : Color.TRANSPARENT);
+        }
+
+        if (immersive) root.setPadding(0, 0, 0, 0);
+        else root.setPadding(safeInsetLeft, safeInsetTop, safeInsetRight, safeInsetBottom);
+
+        root.requestLayout();
+        if (geckoView != null) {
+            geckoView.requestLayout();
+            geckoView.invalidate();
+        }
+    }
+
+    private void recoverVisibleSurface() {
+        if (geckoView == null || browser == null) return;
+        mainHandler.post(() -> {
+            BrowserTab active = browser.getActiveTab();
+            if (active == null || active.session == null) return;
+            active.session.setActive(true);
+            if (displayedSession != active.session) attachSession(active.session);
+            geckoView.requestLayout();
+            geckoView.invalidate();
+        });
+        mainHandler.postDelayed(() -> {
+            if (geckoView == null) return;
+            geckoView.requestLayout();
+            geckoView.invalidate();
+        }, 220L);
     }
 
     private void installSafeAreaInsets() {
@@ -308,7 +476,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             safeInsetTop = top;
             safeInsetRight = right;
             safeInsetBottom = bottom;
-            root.setPadding(left, top, right, bottom);
+            if (isImmersiveMode()) root.setPadding(0, 0, 0, 0);
+            else root.setPadding(left, top, right, bottom);
 
             if (changed) {
                 Log.d(TAG, "Safe area: " + left + "," + top + "," + right + "," + bottom);
@@ -326,9 +495,9 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         bar.setPadding(dp(8), dp(6), dp(8), dp(6));
         bar.setBackgroundColor(getColor(R.color.zen_surface));
 
-        ImageButton sidebar = iconButton(R.drawable.ic_menu, "Pestañas y espacios");
-        sidebar.setOnClickListener(v -> showSidebarPopup());
-        if (!wideLayout) bar.addView(sidebar, square(44));
+        sidebarButton = iconButton(R.drawable.ic_menu, "Pestañas y espacios");
+        sidebarButton.setOnClickListener(v -> showSidebarPopup());
+        bar.addView(sidebarButton, square(44));
 
         backButton = iconButton(R.drawable.ic_back, "Atrás");
         backButton.setOnClickListener(v -> {
@@ -525,7 +694,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         if (essentialCount > 0) {
             View divider = new View(this);
-            divider.setBackgroundColor(0x553A3153);
+            divider.setBackgroundColor(0x55302A39);
             LinearLayout.LayoutParams dividerParams =
                     new LinearLayout.LayoutParams(dp(34), dp(1));
             dividerParams.setMargins(0, dp(5), 0, dp(7));
@@ -676,6 +845,37 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         header.addView(add, square(42));
         panel.addView(header);
 
+        LinearLayout navigation = new LinearLayout(this);
+        navigation.setGravity(Gravity.CENTER_VERTICAL);
+        ImageButton sideBack = iconButton(R.drawable.ic_back, "Atrás");
+        sideBack.setOnClickListener(v -> {
+            BrowserTab tab = browser.getActiveTab();
+            if (tab != null && tab.session != null && tab.canGoBack) tab.session.goBack();
+        });
+        navigation.addView(sideBack, square(40));
+        ImageButton sideForward = iconButton(R.drawable.ic_forward, "Adelante");
+        sideForward.setOnClickListener(v -> {
+            BrowserTab tab = browser.getActiveTab();
+            if (tab != null && tab.session != null && tab.canGoForward) tab.session.goForward();
+        });
+        navigation.addView(sideForward, square(40));
+        ImageButton sideReload = iconButton(R.drawable.ic_reload, "Recargar");
+        sideReload.setOnClickListener(v -> {
+            BrowserTab tab = browser.getActiveTab();
+            if (tab != null && tab.session != null) {
+                if (tab.loading) tab.session.stop(); else tab.session.reload();
+            }
+        });
+        navigation.addView(sideReload, square(40));
+        ImageButton sideFullScreen = iconButton(R.drawable.ic_fullscreen, "Pantalla completa");
+        sideFullScreen.setOnClickListener(v -> {
+            dismissSidebarPopup();
+            mainHandler.postDelayed(this::enterManualFullScreen, 180L);
+        });
+        navigation.addView(sideFullScreen, square(40));
+        panel.addView(navigation, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+
         TextView sidebarSearch = text("Buscar o escribir una dirección", 13, R.color.zen_muted);
         sidebarSearch.setGravity(Gravity.CENTER_VERTICAL);
         sidebarSearch.setSingleLine(true);
@@ -761,6 +961,21 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         });
         panel.addView(essential, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+
+        TextView fullScreenAction = text("Pantalla completa", 14, R.color.zen_muted);
+        fullScreenAction.setGravity(Gravity.CENTER_VERTICAL);
+        fullScreenAction.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_fullscreen, 0, 0, 0);
+        fullScreenAction.setCompoundDrawablePadding(dp(11));
+        fullScreenAction.setPadding(dp(12), 0, dp(12), 0);
+        fullScreenAction.setBackgroundResource(R.drawable.bg_tab_idle);
+        fullScreenAction.setOnClickListener(v -> {
+            dismissSidebarPopup();
+            mainHandler.postDelayed(this::enterManualFullScreen, 180L);
+        });
+        LinearLayout.LayoutParams fullScreenParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
+        fullScreenParams.setMargins(0, dp(6), 0, 0);
+        panel.addView(fullScreenAction, fullScreenParams);
         return panel;
     }
 
@@ -865,6 +1080,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void showSidebarPopup() {
+        if (isImmersiveMode()) return;
         dismissSidebarPopupImmediate();
 
         int availableWidth = Math.max(dp(240),
@@ -966,6 +1182,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void showSearchPopup(boolean newTabMode) {
+        if (isImmersiveMode()) return;
         dismissSearchPopupImmediate();
 
         int availableWidth = Math.max(dp(260),
@@ -1446,18 +1663,22 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             setEnabled(forwardButton, tab.canGoForward);
             reloadButton.setImageResource(tab.loading ? R.drawable.ic_stop : R.drawable.ic_reload);
             reloadButton.setContentDescription(tab.loading ? "Detener" : "Recargar");
-            progressBar.setVisibility(tab.loading ? View.VISIBLE : View.INVISIBLE);
+            progressBar.setVisibility(
+                    tab.loading && !isImmersiveMode() ? View.VISIBLE : View.INVISIBLE);
             progressBar.setProgress(tab.progress);
 
             String fingerprint = sidebarFingerprint();
-            if (wideLayout && fixedSidebar != null && !fingerprint.equals(lastSidebarFingerprint)) {
+            if (fixedSidebar != null && !fingerprint.equals(lastSidebarFingerprint)) {
                 int index = root.indexOfChild(fixedSidebar);
+                int visibility = fixedSidebar.getVisibility();
                 View replacement = createCompactRail();
+                replacement.setVisibility(visibility);
                 root.removeView(fixedSidebar);
                 root.addView(replacement, index,
-                        new LinearLayout.LayoutParams(dp(64), ViewGroup.LayoutParams.MATCH_PARENT));
+                        new LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.MATCH_PARENT));
                 fixedSidebar = replacement;
                 lastSidebarFingerprint = fingerprint;
+                applyResponsiveLayout(getResources().getConfiguration());
             }
             if (sidebarPopup != null && sidebarPopup.isShowing()
                     && !fingerprint.equals(lastPopupSidebarFingerprint)) {

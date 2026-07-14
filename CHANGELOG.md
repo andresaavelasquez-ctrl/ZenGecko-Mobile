@@ -58,3 +58,14 @@
 - Contenido web sobre un fondo ambiental con márgenes.
 - Barra superior reducida en modo compacto.
 - Sin barra inferior y sin recrear GeckoView al expandir el panel.
+
+## 0.1.7 — AMOLED Immersive Zen
+
+- Tema AMOLED negro con contraste alto.
+- Edge-to-edge y modo inmersivo real.
+- Fullscreen web mediante GeckoSession.ContentDelegate.onFullScreen.
+- Fullscreen manual desde el panel.
+- Un único GeckoView durante rotación.
+- Recuperación al volver desde segundo plano.
+- Rail de 58 dp y panel lateral inspirado en Zen.
+- Conservación del selector de motores.

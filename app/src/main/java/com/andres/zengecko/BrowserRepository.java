@@ -17,7 +17,10 @@ import com.andres.zengecko.model.BrowserTab;
 import com.andres.zengecko.model.Workspace;
 
 public final class BrowserRepository {
-    public interface Observer { void onBrowserStateChanged(); }
+    public interface Observer {
+        void onBrowserStateChanged();
+        default void onFullScreenChanged(GeckoSession session, boolean fullScreen) { }
+    }
 
     private static final String PREFS = "browser_state";
     private static final String KEY_STATE = "state_v1";
@@ -244,6 +247,9 @@ public final class BrowserRepository {
                 persistAndNotify();
             }
             @Override public void onCloseRequest(GeckoSession ignored) { closeTab(tab.id); }
+            @Override public void onFullScreen(GeckoSession source, boolean fullScreen) {
+                if (tab.id.equals(activeTabId)) notifyFullScreen(source, fullScreen);
+            }
             @Override public void onCrash(GeckoSession ignored) {
                 tab.title = "La pestaña falló";
                 tab.loading = false;
@@ -443,5 +449,10 @@ public final class BrowserRepository {
     private void notifyObservers() {
         List<Observer> copy = new ArrayList<>(observers);
         for (Observer observer : copy) observer.onBrowserStateChanged();
+    }
+
+    private void notifyFullScreen(GeckoSession session, boolean fullScreen) {
+        List<Observer> copy = new ArrayList<>(observers);
+        for (Observer observer : copy) observer.onFullScreenChanged(session, fullScreen);
     }
 }
