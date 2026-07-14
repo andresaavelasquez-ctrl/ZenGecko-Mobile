@@ -69,3 +69,15 @@
 - Recuperación al volver desde segundo plano.
 - Rail de 58 dp y panel lateral inspirado en Zen.
 - Conservación del selector de motores.
+
+## 0.1.8 — Minimal Immersive Zen
+
+- Barras Android ocultas por defecto sin ocultar la interfaz del navegador.
+- Fullscreen web separado y salida mediante Atrás.
+- Omnibox retraíble y botón de nueva pestaña a la izquierda.
+- Buscador inicial sin recortes laterales.
+- Migración de Espacios a una colección única.
+- Pestañas compactas.
+- Configuración, Perfil y administrador de Descargas.
+- Logos visuales en accesos rápidos.
+- README actualizado automáticamente con cada versión.

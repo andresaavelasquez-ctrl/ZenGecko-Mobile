@@ -36,6 +36,9 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
+import android.widget.ImageView;
+import android.widget.Toast;
+import org.mozilla.geckoview.WebResponse;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
 import android.widget.ProgressBar;
@@ -107,6 +110,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         browser = BrowserRepository.get(this);
         browser.addObserver(this);
         buildUi();
+        applySystemBars(true);
 
         Intent intent = getIntent();
         if (intent != null && Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null) {
@@ -125,7 +129,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         super.onResume();
         setCurrentSessionActive(true);
         recoverVisibleSurface();
-        if (isImmersiveMode()) mainHandler.postDelayed(() -> applySystemBars(true), 60L);
+        mainHandler.postDelayed(() -> applySystemBars(true), 60L);
     }
 
     @Override protected void onStop() {
@@ -154,6 +158,13 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         });
     }
 
+    @Override public void onDownloadRequested(WebResponse response) {
+        runOnUiThread(() -> {
+            DownloadStore.enqueue(this, response);
+            Toast.makeText(this, "Descarga añadida", Toast.LENGTH_SHORT).show();
+        });
+    }
+
     @Override public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         Log.i(TAG, "onConfigurationChanged widthDp=" + newConfig.screenWidthDp
@@ -166,14 +177,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus && isImmersiveMode()) {
-            mainHandler.postDelayed(() -> applySystemBars(true), 80L);
-        }
+        if (hasFocus) mainHandler.postDelayed(() -> applySystemBars(true), 80L);
     }
 
     @Override public void onBackPressed() {
-        if (isImmersiveMode()) {
-            exitImmersiveMode();
+        if (contentFullScreen) {
+            exitContentFullScreen();
             return;
         }
         if (searchEnginePopup != null && searchEnginePopup.isShowing()) {
@@ -316,26 +325,16 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private boolean isImmersiveMode() {
-        return contentFullScreen || manualFullScreen;
+        return contentFullScreen;
     }
 
-    private void enterManualFullScreen() {
-        if (contentFullScreen) return;
-        manualFullScreen = true;
-        applyImmersiveState();
-    }
-
-    private void exitImmersiveMode() {
+    private void exitContentFullScreen() {
         BrowserTab active = browser == null ? null : browser.getActiveTab();
-        if (contentFullScreen && active != null && active.session != null) {
-            try {
-                active.session.exitFullScreen();
-            } catch (RuntimeException error) {
-                Log.w(TAG, "Unable to request content fullscreen exit", error);
-            }
+        if (active != null && active.session != null) {
+            try { active.session.exitFullScreen(); }
+            catch (RuntimeException error) { Log.w(TAG, "Unable to exit content fullscreen", error); }
         }
         contentFullScreen = false;
-        manualFullScreen = false;
         applyImmersiveState();
     }
 
@@ -345,7 +344,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             dismissSearchPopupImmediate();
             dismissSidebarPopupImmediate();
         }
-        applySystemBars(immersive);
+        applySystemBars(true);
         applyResponsiveLayout(getResources().getConfiguration());
         if (appRoot != null) appRoot.requestApplyInsets();
         recoverVisibleSurface();
@@ -442,45 +441,24 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private void installSafeAreaInsets() {
         if (appRoot == null) return;
         appRoot.setOnApplyWindowInsetsListener((view, windowInsets) -> {
-            int left;
-            int top;
-            int right;
-            int bottom;
-
+            int left = 0, top = 0, right = 0, bottom = 0;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Insets safeArea = windowInsets.getInsets(
-                        WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
-                left = safeArea.left;
-                top = safeArea.top;
-                right = safeArea.right;
-                bottom = safeArea.bottom;
-            } else {
-                left = windowInsets.getSystemWindowInsetLeft();
-                top = windowInsets.getSystemWindowInsetTop();
-                right = windowInsets.getSystemWindowInsetRight();
-                bottom = windowInsets.getSystemWindowInsetBottom();
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    DisplayCutout cutout = windowInsets.getDisplayCutout();
-                    if (cutout != null) {
-                        left = Math.max(left, cutout.getSafeInsetLeft());
-                        top = Math.max(top, cutout.getSafeInsetTop());
-                        right = Math.max(right, cutout.getSafeInsetRight());
-                        bottom = Math.max(bottom, cutout.getSafeInsetBottom());
-                    }
+                Insets cutout = windowInsets.getInsets(WindowInsets.Type.displayCutout());
+                left = cutout.left; top = cutout.top; right = cutout.right; bottom = cutout.bottom;
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                DisplayCutout cutout = windowInsets.getDisplayCutout();
+                if (cutout != null) {
+                    left = cutout.getSafeInsetLeft(); top = cutout.getSafeInsetTop();
+                    right = cutout.getSafeInsetRight(); bottom = cutout.getSafeInsetBottom();
                 }
             }
-
             boolean changed = left != safeInsetLeft || top != safeInsetTop
                     || right != safeInsetRight || bottom != safeInsetBottom;
-            safeInsetLeft = left;
-            safeInsetTop = top;
-            safeInsetRight = right;
-            safeInsetBottom = bottom;
-            if (isImmersiveMode()) root.setPadding(0, 0, 0, 0);
+            safeInsetLeft = left; safeInsetTop = top;
+            safeInsetRight = right; safeInsetBottom = bottom;
+            if (contentFullScreen) root.setPadding(0, 0, 0, 0);
             else root.setPadding(left, top, right, bottom);
-
             if (changed) {
-                Log.d(TAG, "Safe area: " + left + "," + top + "," + right + "," + bottom);
                 dismissSearchPopupImmediate();
                 dismissSidebarPopupImmediate();
             }
@@ -492,42 +470,33 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private View createToolbar() {
         LinearLayout bar = new LinearLayout(this);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(8), dp(6), dp(8), dp(6));
+        bar.setPadding(dp(5), dp(3), dp(5), dp(3));
         bar.setBackgroundColor(getColor(R.color.zen_surface));
 
-        sidebarButton = iconButton(R.drawable.ic_menu, "Pestañas y espacios");
+        sidebarButton = iconButton(R.drawable.ic_menu, "Pestañas");
         sidebarButton.setOnClickListener(v -> showSidebarPopup());
-        bar.addView(sidebarButton, square(44));
+        bar.addView(sidebarButton, square(38));
+
+        ImageButton newTab = iconButton(R.drawable.ic_add, "Nueva pestaña");
+        newTab.setOnClickListener(v -> openNewTabAndSearch());
+        bar.addView(newTab, square(38));
 
         backButton = iconButton(R.drawable.ic_back, "Atrás");
         backButton.setOnClickListener(v -> {
             BrowserTab tab = browser.getActiveTab();
             if (tab != null && tab.session != null && tab.canGoBack) tab.session.goBack();
         });
-        bar.addView(backButton, square(40));
+        bar.addView(backButton, square(36));
 
         forwardButton = iconButton(R.drawable.ic_forward, "Adelante");
         forwardButton.setOnClickListener(v -> {
             BrowserTab tab = browser.getActiveTab();
             if (tab != null && tab.session != null && tab.canGoForward) tab.session.goForward();
         });
-        bar.addView(forwardButton, square(40));
+        bar.addView(forwardButton, square(36));
 
-        addressDisplay = text("Nueva pestaña", 14, R.color.zen_text);
-        addressDisplay.setSingleLine(true);
-        addressDisplay.setEllipsize(TextUtils.TruncateAt.END);
-        addressDisplay.setGravity(Gravity.CENTER_VERTICAL);
-        addressDisplay.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
-        addressDisplay.setCompoundDrawablePadding(dp(9));
-        addressDisplay.setBackgroundResource(R.drawable.bg_address);
-        addressDisplay.setPadding(dp(14), 0, dp(14), 0);
-        addressDisplay.setFocusable(true);
-        addressDisplay.setClickable(true);
-        addressDisplay.setContentDescription("Buscar o escribir una dirección");
-        addressDisplay.setOnClickListener(v -> showSearchPopup(false));
-        LinearLayout.LayoutParams addressParams = new LinearLayout.LayoutParams(0, dp(42), 1f);
-        addressParams.setMargins(dp(4), 0, dp(4), 0);
-        bar.addView(addressDisplay, addressParams);
+        View spacer = new View(this);
+        bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
 
         reloadButton = iconButton(R.drawable.ic_reload, "Recargar o detener");
         reloadButton.setOnClickListener(v -> {
@@ -536,11 +505,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 if (tab.loading) tab.session.stop(); else tab.session.reload();
             }
         });
-        bar.addView(reloadButton, square(40));
+        bar.addView(reloadButton, square(36));
 
-        ImageButton newTab = iconButton(R.drawable.ic_add, "Nueva pestaña");
-        newTab.setOnClickListener(v -> openNewTabAndSearch());
-        bar.addView(newTab, square(44));
+        ImageButton search = iconButton(R.drawable.ic_search, "Desplegar búsqueda");
+        search.setOnClickListener(v -> showSearchPopup(false));
+        bar.addView(search, square(40));
+        addressDisplay = null;
         return bar;
     }
 
@@ -552,39 +522,39 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setGravity(Gravity.CENTER_HORIZONTAL);
-        page.setPadding(dp(28), dp(54), dp(28), dp(36));
+        page.setPadding(dp(22), dp(34), dp(22), dp(28));
         scroll.addView(page, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        TextView logo = text("Z", 42, R.color.zen_bg);
+        TextView logo = text("Z", 36, R.color.zen_bg);
         logo.setTypeface(Typeface.DEFAULT_BOLD);
         logo.setGravity(Gravity.CENTER);
         logo.setBackgroundResource(R.drawable.bg_zen_mark);
-        page.addView(logo, new LinearLayout.LayoutParams(dp(82), dp(82)));
+        page.addView(logo, new LinearLayout.LayoutParams(dp(70), dp(70)));
 
-        TextView title = text("ZenGecko", 26, R.color.zen_text);
+        TextView title = text("ZenGecko", 23, R.color.zen_text);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        titleParams.setMargins(0, dp(20), 0, dp(5));
+        titleParams.setMargins(0, dp(15), 0, dp(3));
         page.addView(title, titleParams);
 
-        TextView subtitle = text("Un espacio tranquilo para navegar", 14, R.color.zen_muted);
+        TextView subtitle = text("Un espacio tranquilo para navegar", 13, R.color.zen_muted);
         subtitle.setGravity(Gravity.CENTER);
         page.addView(subtitle, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView search = text("Buscar o escribir una dirección", 15, R.color.zen_muted);
+        TextView search = text("Buscar o escribir una dirección", 14, R.color.zen_muted);
         search.setGravity(Gravity.CENTER_VERTICAL);
         search.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
-        search.setCompoundDrawablePadding(dp(10));
-        search.setPadding(dp(18), 0, dp(18), 0);
+        search.setCompoundDrawablePadding(dp(9));
+        search.setPadding(dp(16), 0, dp(16), 0);
         search.setBackgroundResource(R.drawable.bg_search_large);
         search.setOnClickListener(v -> showSearchPopup(true));
         LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
-                Math.min(dp(620), getResources().getDisplayMetrics().widthPixels - dp(56)), dp(56));
-        searchParams.setMargins(0, dp(30), 0, dp(26));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
+        searchParams.setMargins(0, dp(25), 0, dp(21));
         page.addView(search, searchParams);
 
         TextView quickLabel = label("ACCESOS RÁPIDOS");
@@ -595,38 +565,37 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         LinearLayout quickRow = new LinearLayout(this);
         quickRow.setGravity(Gravity.CENTER);
         quickRow.setOrientation(LinearLayout.HORIZONTAL);
-        quickRow.addView(quickSite("GitHub", "https://github.com"));
-        quickRow.addView(quickSite("YouTube", "https://youtube.com"));
-        quickRow.addView(quickSite("Wikipedia", "https://wikipedia.org"));
+        quickRow.addView(quickSite("GitHub", "https://github.com", R.drawable.ic_site_github));
+        quickRow.addView(quickSite("YouTube", "https://youtube.com", R.drawable.ic_site_youtube));
+        quickRow.addView(quickSite("Wikipedia", "https://wikipedia.org", R.drawable.ic_site_wikipedia));
         page.addView(quickRow, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return scroll;
     }
 
-    private View quickSite(String title, String url) {
+    private View quickSite(String title, String url, int iconRes) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER);
         card.setBackgroundResource(R.drawable.bg_quick_site);
-        card.setPadding(dp(8), dp(10), dp(8), dp(8));
+        card.setPadding(dp(6), dp(8), dp(6), dp(6));
         card.setOnClickListener(v -> browser.loadInActiveTab(url));
 
-        TextView mark = text(title.substring(0, 1).toUpperCase(Locale.ROOT), 18, R.color.zen_text);
-        mark.setTypeface(Typeface.DEFAULT_BOLD);
-        mark.setGravity(Gravity.CENTER);
-        mark.setBackgroundResource(R.drawable.bg_favicon);
-        card.addView(mark, new LinearLayout.LayoutParams(dp(42), dp(42)));
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        card.addView(icon, new LinearLayout.LayoutParams(dp(36), dp(36)));
 
-        TextView label = text(title, 12, R.color.zen_muted);
+        TextView label = text(title, 11, R.color.zen_muted);
         label.setGravity(Gravity.CENTER);
         label.setSingleLine(true);
         LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        labelParams.setMargins(0, dp(7), 0, 0);
+        labelParams.setMargins(0, dp(5), 0, 0);
         card.addView(label, labelParams);
 
-        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(dp(94), dp(84));
-        cardParams.setMargins(dp(5), 0, dp(5), 0);
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(dp(82), dp(72));
+        cardParams.setMargins(dp(4), 0, dp(4), 0);
         card.setLayoutParams(cardParams);
         return card;
     }
@@ -664,63 +633,40 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         LinearLayout rail = new LinearLayout(this);
         rail.setOrientation(LinearLayout.VERTICAL);
         rail.setGravity(Gravity.CENTER_HORIZONTAL);
-        rail.setPadding(dp(6), dp(8), dp(6), dp(8));
+        rail.setPadding(dp(5), dp(6), dp(5), dp(6));
         rail.setBackgroundResource(R.drawable.bg_compact_rail);
 
-        TextView zen = text("Z", 20, R.color.zen_bg);
+        TextView zen = text("Z", 18, R.color.zen_bg);
         zen.setTypeface(Typeface.DEFAULT_BOLD);
         zen.setGravity(Gravity.CENTER);
         zen.setBackgroundResource(R.drawable.bg_zen_mark);
-        zen.setContentDescription("Expandir Compact Zen");
+        zen.setContentDescription("Abrir pestañas");
         zen.setOnClickListener(v -> showSidebarPopup());
-        rail.addView(zen, new LinearLayout.LayoutParams(dp(46), dp(46)));
-
-        View upperSpacer = new View(this);
-        rail.addView(upperSpacer, new LinearLayout.LayoutParams(1, dp(8)));
+        rail.addView(zen, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false);
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
         column.setGravity(Gravity.CENTER_HORIZONTAL);
-
         int essentialCount = 0;
         for (BrowserTab tab : browser.getVisibleTabs()) {
             if (!tab.essential) continue;
             column.addView(compactTabButton(tab), compactRailItemParams());
-            essentialCount++;
-            if (essentialCount >= 4) break;
+            if (++essentialCount >= 5) break;
         }
-
-        if (essentialCount > 0) {
-            View divider = new View(this);
-            divider.setBackgroundColor(0x55302A39);
-            LinearLayout.LayoutParams dividerParams =
-                    new LinearLayout.LayoutParams(dp(34), dp(1));
-            dividerParams.setMargins(0, dp(5), 0, dp(7));
-            column.addView(divider, dividerParams);
-        }
-
-        int workspaceCount = 0;
-        for (Workspace workspace : browser.getWorkspaces()) {
-            column.addView(compactWorkspaceButton(workspace), compactRailItemParams());
-            workspaceCount++;
-            if (workspaceCount >= 5) break;
-        }
-
         scroll.addView(column);
         rail.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         ImageButton add = iconButton(R.drawable.ic_add, "Nueva pestaña");
         add.setOnClickListener(v -> openNewTabAndSearch());
-        rail.addView(add, new LinearLayout.LayoutParams(dp(46), dp(46)));
+        rail.addView(add, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
-        ImageButton expand = iconButton(R.drawable.ic_menu, "Expandir barra lateral");
+        ImageButton expand = iconButton(R.drawable.ic_menu, "Abrir pestañas");
         expand.setOnClickListener(v -> showSidebarPopup());
-        LinearLayout.LayoutParams expandParams =
-                new LinearLayout.LayoutParams(dp(46), dp(46));
-        expandParams.setMargins(0, dp(6), 0, 0);
+        LinearLayout.LayoutParams expandParams = new LinearLayout.LayoutParams(dp(42), dp(42));
+        expandParams.setMargins(0, dp(4), 0, 0);
         rail.addView(expand, expandParams);
         return rail;
     }
@@ -832,17 +778,17 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private View createSidebar() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(12), dp(14), dp(12), dp(12));
+        panel.setPadding(dp(11), dp(11), dp(11), dp(10));
         panel.setBackgroundResource(R.drawable.bg_sidebar_panel);
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView brand = text("ZEN·GECKO", 18, R.color.zen_text);
+        TextView brand = text("ZEN·GECKO", 17, R.color.zen_text);
         brand.setTypeface(Typeface.DEFAULT_BOLD);
-        header.addView(brand, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        header.addView(brand, new LinearLayout.LayoutParams(0, dp(40), 1f));
         ImageButton add = iconButton(R.drawable.ic_add, "Nueva pestaña");
         add.setOnClickListener(v -> openNewTabFromSidebar());
-        header.addView(add, square(42));
+        header.addView(add, square(38));
         panel.addView(header);
 
         LinearLayout navigation = new LinearLayout(this);
@@ -852,13 +798,13 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             BrowserTab tab = browser.getActiveTab();
             if (tab != null && tab.session != null && tab.canGoBack) tab.session.goBack();
         });
-        navigation.addView(sideBack, square(40));
+        navigation.addView(sideBack, square(36));
         ImageButton sideForward = iconButton(R.drawable.ic_forward, "Adelante");
         sideForward.setOnClickListener(v -> {
             BrowserTab tab = browser.getActiveTab();
             if (tab != null && tab.session != null && tab.canGoForward) tab.session.goForward();
         });
-        navigation.addView(sideForward, square(40));
+        navigation.addView(sideForward, square(36));
         ImageButton sideReload = iconButton(R.drawable.ic_reload, "Recargar");
         sideReload.setOnClickListener(v -> {
             BrowserTab tab = browser.getActiveTab();
@@ -866,124 +812,83 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 if (tab.loading) tab.session.stop(); else tab.session.reload();
             }
         });
-        navigation.addView(sideReload, square(40));
-        ImageButton sideFullScreen = iconButton(R.drawable.ic_fullscreen, "Pantalla completa");
-        sideFullScreen.setOnClickListener(v -> {
-            dismissSidebarPopup();
-            mainHandler.postDelayed(this::enterManualFullScreen, 180L);
-        });
-        navigation.addView(sideFullScreen, square(40));
+        navigation.addView(sideReload, square(36));
         panel.addView(navigation, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(38)));
 
         TextView sidebarSearch = text("Buscar o escribir una dirección", 13, R.color.zen_muted);
         sidebarSearch.setGravity(Gravity.CENTER_VERTICAL);
         sidebarSearch.setSingleLine(true);
         sidebarSearch.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
-        sidebarSearch.setCompoundDrawablePadding(dp(9));
-        sidebarSearch.setPadding(dp(14), 0, dp(14), 0);
+        sidebarSearch.setCompoundDrawablePadding(dp(8));
+        sidebarSearch.setPadding(dp(13), 0, dp(13), 0);
         sidebarSearch.setBackgroundResource(R.drawable.bg_address);
         sidebarSearch.setOnClickListener(v -> {
             dismissSidebarPopup();
-            mainHandler.postDelayed(() -> showSearchPopup(false), 190L);
+            mainHandler.postDelayed(() -> showSearchPopup(false), 180L);
         });
         LinearLayout.LayoutParams sideSearchParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
-        sideSearchParams.setMargins(0, dp(4), 0, dp(8));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42));
+        sideSearchParams.setMargins(0, dp(3), 0, dp(6));
         panel.addView(sidebarSearch, sideSearchParams);
-
-        Workspace activeWorkspace = activeWorkspace();
-        if (activeWorkspace != null) {
-            TextView workspaceTitle = text(activeWorkspace.name, 13, R.color.zen_muted);
-            workspaceTitle.setSingleLine(true);
-            workspaceTitle.setPadding(dp(8), 0, dp(8), dp(7));
-            panel.addView(workspaceTitle);
-        }
-
-        TextView workspacesLabel = label("ESPACIOS");
-        panel.addView(workspacesLabel);
-        HorizontalScrollView workspaceScroll = new HorizontalScrollView(this);
-        workspaceScroll.setHorizontalScrollBarEnabled(false);
-        LinearLayout workspaceRow = new LinearLayout(this);
-        workspaceRow.setOrientation(LinearLayout.HORIZONTAL);
-        for (Workspace workspace : browser.getWorkspaces()) {
-            boolean active = workspace.id.equals(browser.getActiveWorkspaceId());
-            TextView chip = text(workspace.name.substring(0, Math.min(1, workspace.name.length())).toUpperCase(Locale.ROOT),
-                    14, active ? R.color.zen_text : R.color.zen_muted);
-            chip.setGravity(Gravity.CENTER);
-            chip.setTypeface(Typeface.DEFAULT_BOLD);
-            chip.setContentDescription(workspace.name);
-            chip.setBackgroundResource(active ? R.drawable.bg_tab_active : R.drawable.bg_tab_idle);
-            chip.setOnClickListener(v -> animateWebTransition(() -> browser.switchWorkspace(workspace.id)));
-            LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(dp(44), dp(44));
-            chipParams.setMargins(0, 0, dp(8), 0);
-            workspaceRow.addView(chip, chipParams);
-        }
-        TextView addWorkspace = text("＋", 17, R.color.zen_muted);
-        addWorkspace.setGravity(Gravity.CENTER);
-        addWorkspace.setBackgroundResource(R.drawable.bg_tab_idle);
-        addWorkspace.setOnClickListener(v -> promptWorkspace());
-        workspaceRow.addView(addWorkspace, new LinearLayout.LayoutParams(dp(44), dp(44)));
-        workspaceScroll.addView(workspaceRow);
-        panel.addView(workspaceScroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(56)));
 
         ScrollView tabsScroll = new ScrollView(this);
         tabsScroll.setFillViewport(true);
         LinearLayout tabsColumn = new LinearLayout(this);
         tabsColumn.setOrientation(LinearLayout.VERTICAL);
-
         List<BrowserTab> visible = browser.getVisibleTabs();
         List<BrowserTab> essentialTabs = new ArrayList<>();
-        for (BrowserTab tab : visible) {
-            if (tab.essential) essentialTabs.add(tab);
-        }
+        for (BrowserTab tab : visible) if (tab.essential) essentialTabs.add(tab);
         if (!essentialTabs.isEmpty()) {
             tabsColumn.addView(label("ESENCIALES"));
             tabsColumn.addView(createEssentialGrid(essentialTabs));
         }
         tabsColumn.addView(label("PESTAÑAS"));
-        for (BrowserTab tab : visible) {
-            if (!tab.essential) tabsColumn.addView(tabRow(tab));
-        }
-
+        for (BrowserTab tab : visible) if (!tab.essential) tabsColumn.addView(tabRow(tab));
         tabsScroll.addView(tabsColumn);
         panel.addView(tabsScroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        TextView essential = text("◆  Alternar esencial", 14, R.color.zen_muted);
-        essential.setGravity(Gravity.CENTER_VERTICAL);
-        essential.setPadding(dp(12), 0, dp(12), 0);
-        essential.setBackgroundResource(R.drawable.bg_tab_idle);
-        essential.setOnClickListener(v -> {
-            BrowserTab tab = browser.getActiveTab();
-            if (tab != null) browser.toggleEssential(tab.id);
-        });
-        panel.addView(essential, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
-
-        TextView fullScreenAction = text("Pantalla completa", 14, R.color.zen_muted);
-        fullScreenAction.setGravity(Gravity.CENTER_VERTICAL);
-        fullScreenAction.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_fullscreen, 0, 0, 0);
-        fullScreenAction.setCompoundDrawablePadding(dp(11));
-        fullScreenAction.setPadding(dp(12), 0, dp(12), 0);
-        fullScreenAction.setBackgroundResource(R.drawable.bg_tab_idle);
-        fullScreenAction.setOnClickListener(v -> {
-            dismissSidebarPopup();
-            mainHandler.postDelayed(this::enterManualFullScreen, 180L);
-        });
-        LinearLayout.LayoutParams fullScreenParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
-        fullScreenParams.setMargins(0, dp(6), 0, 0);
-        panel.addView(fullScreenAction, fullScreenParams);
+        LinearLayout utilities = new LinearLayout(this);
+        utilities.setGravity(Gravity.CENTER);
+        utilities.addView(utilityAction(R.drawable.ic_settings, "Configuración", () ->
+                startActivity(new Intent(this, SettingsActivity.class))),
+                new LinearLayout.LayoutParams(0, dp(54), 1f));
+        utilities.addView(utilityAction(R.drawable.ic_profile, "Perfil", () ->
+                startActivity(new Intent(this, ProfileActivity.class))),
+                new LinearLayout.LayoutParams(0, dp(54), 1f));
+        utilities.addView(utilityAction(R.drawable.ic_downloads, "Descargas", () ->
+                startActivity(new Intent(this, DownloadsActivity.class))),
+                new LinearLayout.LayoutParams(0, dp(54), 1f));
+        panel.addView(utilities, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
         return panel;
+    }
+
+    private View utilityAction(int iconRes, String label, Runnable action) {
+        LinearLayout item = new LinearLayout(this);
+        item.setOrientation(LinearLayout.VERTICAL);
+        item.setGravity(Gravity.CENTER);
+        item.setBackgroundResource(R.drawable.bg_button);
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        icon.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_text)));
+        item.addView(icon, new LinearLayout.LayoutParams(dp(23), dp(23)));
+        TextView caption = text(label, 9, R.color.zen_muted);
+        caption.setGravity(Gravity.CENTER);
+        item.addView(caption);
+        item.setOnClickListener(v -> {
+            dismissSidebarPopupImmediate();
+            action.run();
+        });
+        return item;
     }
 
     private View tabRow(BrowserTab tab) {
         boolean active = browser.getActiveTab() != null && browser.getActiveTab().id.equals(tab.id);
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(8), dp(4), dp(4), dp(4));
+        row.setPadding(dp(7), dp(3), dp(3), dp(3));
         row.setBackgroundResource(active ? R.drawable.bg_tab_active : R.drawable.bg_tab_idle);
         row.setOnClickListener(v -> selectTabFromSidebar(tab.id));
 
@@ -991,62 +896,55 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         row.setOnTouchListener((view, event) -> {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
-                    gesture[0] = event.getX();
-                    gesture[1] = event.getY();
-                    view.setPressed(true);
-                    return true;
+                    gesture[0] = event.getX(); gesture[1] = event.getY();
+                    view.setPressed(true); return true;
                 case MotionEvent.ACTION_MOVE:
                     float moveX = event.getX() - gesture[0];
-                    if (Math.abs(moveX) > dp(8)) view.setTranslationX(moveX * .28f);
+                    if (Math.abs(moveX) > dp(8)) view.setTranslationX(moveX * .25f);
                     return true;
                 case MotionEvent.ACTION_UP:
                     view.setPressed(false);
                     float dx = event.getX() - gesture[0];
                     float dy = event.getY() - gesture[1];
-                    if (Math.abs(dx) > dp(82) && Math.abs(dx) > Math.abs(dy) * 1.4f) {
+                    if (Math.abs(dx) > dp(72) && Math.abs(dx) > Math.abs(dy) * 1.4f) {
                         animateTabRowClose(view, tab.id, dx >= 0 ? 1 : -1);
                     } else {
-                        view.animate().translationX(0f).setDuration(100).withEndAction(view::performClick).start();
+                        view.animate().translationX(0f).setDuration(90).withEndAction(view::performClick).start();
                     }
                     return true;
                 case MotionEvent.ACTION_CANCEL:
                     view.setPressed(false);
-                    view.animate().translationX(0f).setDuration(100).start();
+                    view.animate().translationX(0f).setDuration(90).start();
                     return true;
-                default:
-                    return true;
+                default: return true;
             }
         });
 
-        TextView favicon = text(faviconLetter(tab), 13, R.color.zen_text);
+        TextView favicon = text(faviconLetter(tab), 12, R.color.zen_text);
         favicon.setTypeface(Typeface.DEFAULT_BOLD);
         favicon.setGravity(Gravity.CENTER);
         favicon.setBackgroundResource(tab.loading ? R.drawable.bg_favicon_loading : R.drawable.bg_favicon);
-        row.addView(favicon, square(34));
+        row.addView(favicon, square(30));
 
-        LinearLayout labels = new LinearLayout(this);
-        labels.setOrientation(LinearLayout.VERTICAL);
-        TextView title = text(displayTitle(tab), 14, R.color.zen_text);
+        TextView title = text(displayTitle(tab), 13, R.color.zen_text);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
-        TextView url = text(shortUrl(tab.url), 11, R.color.zen_muted);
-        url.setSingleLine(true);
-        url.setEllipsize(TextUtils.TruncateAt.END);
-        labels.addView(title);
-        labels.addView(url);
-        row.addView(labels, new LinearLayout.LayoutParams(0, dp(50), 1f));
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, dp(38), 1f);
+        titleParams.setMargins(dp(9), 0, dp(3), 0);
+        row.addView(title, titleParams);
 
         ImageButton close = iconButton(R.drawable.ic_close, "Cerrar pestaña");
         close.setBackgroundResource(R.drawable.bg_close_button);
+        close.setPadding(dp(8), dp(8), dp(8), dp(8));
         close.setOnClickListener(v -> {
             v.setEnabled(false);
             animateTabRowClose(row, tab.id, 1);
         });
-        row.addView(close, square(48));
+        row.addView(close, square(34));
 
         LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(62));
-        rowParams.setMargins(0, 0, 0, dp(4));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        rowParams.setMargins(0, 0, 0, dp(3));
         row.setLayoutParams(rowParams);
         return row;
     }
@@ -1655,16 +1553,18 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             }
             boolean newTab = tab.url == null || "about:blank".equals(tab.url);
             newTabSurface.setVisibility(newTab ? View.VISIBLE : View.GONE);
-            addressDisplay.setText(newTab ? "Nueva pestaña" : displayHost(tab.url));
-            addressDisplay.setContentDescription(newTab
-                    ? "Buscar o escribir una dirección"
-                    : "Dirección actual: " + tab.url);
+            if (addressDisplay != null) {
+                addressDisplay.setText(newTab ? "Nueva pestaña" : displayHost(tab.url));
+                addressDisplay.setContentDescription(newTab
+                        ? "Buscar o escribir una dirección"
+                        : "Dirección actual: " + tab.url);
+            }
             setEnabled(backButton, tab.canGoBack);
             setEnabled(forwardButton, tab.canGoForward);
             reloadButton.setImageResource(tab.loading ? R.drawable.ic_stop : R.drawable.ic_reload);
             reloadButton.setContentDescription(tab.loading ? "Detener" : "Recargar");
             progressBar.setVisibility(
-                    tab.loading && !isImmersiveMode() ? View.VISIBLE : View.INVISIBLE);
+                    tab.loading && !contentFullScreen ? View.VISIBLE : View.INVISIBLE);
             progressBar.setProgress(tab.progress);
 
             String fingerprint = sidebarFingerprint();

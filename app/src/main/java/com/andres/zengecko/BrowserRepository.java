@@ -13,6 +13,7 @@ import org.json.JSONObject;
 import org.mozilla.geckoview.GeckoResult;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.WebRequestError;
+import org.mozilla.geckoview.WebResponse;
 import com.andres.zengecko.model.BrowserTab;
 import com.andres.zengecko.model.Workspace;
 
@@ -20,6 +21,7 @@ public final class BrowserRepository {
     public interface Observer {
         void onBrowserStateChanged();
         default void onFullScreenChanged(GeckoSession session, boolean fullScreen) { }
+        default void onDownloadRequested(WebResponse response) { }
     }
 
     private static final String PREFS = "browser_state";
@@ -97,13 +99,7 @@ public final class BrowserRepository {
         return tabs.isEmpty() ? null : tabs.get(0);
     }
 
-    public List<BrowserTab> getVisibleTabs() {
-        List<BrowserTab> result = new ArrayList<>();
-        for (BrowserTab tab : tabs) {
-            if (tab.essential || tab.workspaceId.equals(activeWorkspaceId)) result.add(tab);
-        }
-        return result;
-    }
+    public List<BrowserTab> getVisibleTabs() { return new ArrayList<>(tabs); }
 
     public BrowserTab addTab(String rawUrl, boolean select) {
         String url = normalizeInput(rawUrl);
@@ -159,7 +155,7 @@ public final class BrowserRepository {
             if (blank.session != null) blank.session.close();
         }
 
-        String workspaceId = findWorkspace(closed.workspaceId) == null ? activeWorkspaceId : closed.workspaceId;
+        String workspaceId = activeWorkspaceId;
         BrowserTab restored = new BrowserTab(UUID.randomUUID().toString(), workspaceId,
                 closed.title == null ? "Nueva pestaña" : closed.title,
                 closed.url == null ? "about:blank" : closed.url);
@@ -203,7 +199,7 @@ public final class BrowserRepository {
         BrowserTab tab = findTab(tabId);
         if (tab == null) return;
         tab.essential = !tab.essential;
-        if (!tab.essential) tab.workspaceId = activeWorkspaceId;
+        tab.workspaceId = activeWorkspaceId;
         persistAndNotify();
     }
 
@@ -249,6 +245,9 @@ public final class BrowserRepository {
             @Override public void onCloseRequest(GeckoSession ignored) { closeTab(tab.id); }
             @Override public void onFullScreen(GeckoSession source, boolean fullScreen) {
                 if (tab.id.equals(activeTabId)) notifyFullScreen(source, fullScreen);
+            }
+            @Override public void onExternalResponse(GeckoSession source, WebResponse response) {
+                if (tab.id.equals(activeTabId)) notifyDownload(response);
             }
             @Override public void onCrash(GeckoSession ignored) {
                 tab.title = "La pestaña falló";
@@ -337,7 +336,7 @@ public final class BrowserRepository {
             int left = formerIndex - 1 - distance;
             if (left >= 0) {
                 BrowserTab candidate = tabs.get(left);
-                if (candidate.essential || candidate.workspaceId.equals(activeWorkspaceId)) return candidate;
+                return candidate;
             }
             int right = formerIndex - distance;
             if (right >= 0 && right < tabs.size()) {
@@ -349,7 +348,7 @@ public final class BrowserRepository {
     }
 
     private BrowserTab firstVisibleTab() {
-        for (BrowserTab tab : tabs) if (tab.essential || tab.workspaceId.equals(activeWorkspaceId)) return tab;
+        for (BrowserTab tab : tabs) return tab;
         return null;
     }
 
@@ -408,12 +407,10 @@ public final class BrowserRepository {
                 workspaces.clear(); tabs.clear(); recentUrls.clear();
             }
         }
-        if (workspaces.isEmpty()) {
-            workspaces.add(new Workspace("personal", "Personal"));
-            workspaces.add(new Workspace("work", "Trabajo"));
-            workspaces.add(new Workspace("study", "Estudio"));
-        }
-        if (activeWorkspaceId == null || findWorkspace(activeWorkspaceId) == null) activeWorkspaceId = workspaces.get(0).id;
+        workspaces.clear();
+        workspaces.add(new Workspace("personal", "Personal"));
+        activeWorkspaceId = "personal";
+        for (BrowserTab tab : tabs) tab.workspaceId = activeWorkspaceId;
         if (tabs.isEmpty()) {
             BrowserTab start = new BrowserTab(UUID.randomUUID().toString(), activeWorkspaceId, "Nueva pestaña", "about:blank");
             tabs.add(start); activeTabId = start.id;
@@ -449,6 +446,12 @@ public final class BrowserRepository {
     private void notifyObservers() {
         List<Observer> copy = new ArrayList<>(observers);
         for (Observer observer : copy) observer.onBrowserStateChanged();
+    }
+
+
+    private void notifyDownload(WebResponse response) {
+        List<Observer> copy = new ArrayList<>(observers);
+        for (Observer observer : copy) observer.onDownloadRequested(response);
     }
 
     private void notifyFullScreen(GeckoSession session, boolean fullScreen) {
