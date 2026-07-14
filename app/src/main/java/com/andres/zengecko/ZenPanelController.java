@@ -228,228 +228,73 @@ public final class ZenPanelController {
     public static void showSettings(
             Activity activity, BrowserRepository browser, Runnable returnToSidebar) {
         LinearLayout content = column(activity);
-        SharedPreferences preferences = ui(activity);
 
-        content.addView(section(activity, "BÚSQUEDA"));
-        content.addView(dropdownRow(
-                activity,
-                "Motor de búsqueda",
-                browser.getSearchEngine().displayName,
-                () -> showEngineDropdown(activity, browser)));
-        content.addView(toggle(activity,
-                "Sugerencias del historial",
-                "Muestra direcciones visitadas dentro del buscador.",
-                KEY_SEARCH_SUGGESTIONS,
-                true,
-                preferences));
-        content.addView(toggle(activity,
-                "Buscar en pestañas abiertas",
-                "Incluye las pestañas actuales entre los resultados.",
-                KEY_SEARCH_TABS,
-                true,
-                preferences));
+        EditText search = new EditText(activity);
+        search.setSingleLine(true);
+        search.setHint("Buscar en Ajustes");
+        search.setTextSize(14);
+        search.setTextColor(activity.getColor(R.color.zen_text));
+        search.setHintTextColor(activity.getColor(R.color.zen_muted));
+        search.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
+        search.setCompoundDrawablePadding(dp(activity, 9));
+        search.setPadding(dp(activity, 14), 0, dp(activity, 14), 0);
+        search.setBackgroundResource(R.drawable.bg_address_rounder);
+        content.addView(search, rowParams(activity, 48));
 
-        content.addView(section(activity, "INICIO Y PESTAÑAS"));
-        content.addView(homePageEditor(activity, preferences));
-        content.addView(toggle(activity,
-                "Restaurar sesión al iniciar",
-                "Recupera pestañas y espacios después de cerrar la aplicación.",
-                KEY_RESTORE_SESSION,
-                true,
-                preferences));
-        content.addView(toggle(activity,
-                "Accesos rápidos en pestaña nueva",
-                "Los accesos no reemplazan la página que estés usando.",
-                KEY_QUICK_NEW_TAB,
-                false,
-                preferences));
-        content.addView(toggle(activity,
-                "Fondo bonsái en Inicio",
-                "Usa la imagen zen como fondo de las pestañas nuevas.",
-                KEY_HOME_BACKGROUND,
-                true,
-                preferences));
-        content.addView(toggle(activity,
-                "Movimiento ambiental del fondo",
-                "Aplica un acercamiento muy lento y discreto.",
-                KEY_HOME_MOTION,
-                true,
-                preferences));
-        content.addView(toggle(activity,
-                "Sonido de tecla mecánica",
-                "La tecla Z reproduce un clic corto respetando el modo silencioso.",
-                KEY_KEY_SOUND,
-                true,
-                preferences));
-        content.addView(toggle(activity,
-                "Respuesta háptica de la tecla",
-                "Añade una vibración ligera al presionar la Z.",
-                KEY_KEY_HAPTICS,
-                true,
-                preferences));
-        content.addView(toggle(activity,
-                "Deslizar para cerrar pestañas",
-                "Permite cerrar una pestaña con un gesto lateral.",
-                KEY_SWIPE_CLOSE,
-                true,
-                preferences));
-        content.addView(toggle(activity,
-                "Mostrar botón cerrar",
-                "Muestra la X en cada pestaña del menú.",
-                KEY_TAB_CLOSE_BUTTON,
-                true,
-                preferences));
+        LinearLayout categories = new LinearLayout(activity);
+        categories.setOrientation(LinearLayout.VERTICAL);
+        content.addView(categories);
 
-        content.addView(section(activity, "INTERFAZ"));
-        content.addView(toggle(activity,
-                "Animaciones suaves",
-                "Transiciones del menú, pestañas y paneles.",
-                KEY_ANIMATIONS,
-                true,
-                preferences));
-        content.addView(toggle(activity,
-                "Mostrar dirección en páginas",
-                "La URL aparece arriba cuando una página está abierta.",
-                KEY_SHOW_ADDRESS,
-                true,
-                preferences));
-        content.addView(toggle(activity,
-                "Barra de progreso",
-                "Muestra el progreso de carga con el estilo Zen.",
-                KEY_SHOW_PROGRESS,
-                true,
-                preferences));
-        BrowserTab activeTab = browser.getActiveTab();
-        if (activeTab != null) {
-            TextView desktopCurrent = actionRow(
-                    activity,
-                    "Sitio de escritorio para esta pestaña: "
-                            + (activeTab.desktopMode ? "Activado" : "Desactivado"),
-                    R.color.zen_text);
-            desktopCurrent.setOnClickListener(v -> {
-                boolean next = !activeTab.desktopMode;
-                browser.setDesktopMode(activeTab.id, next);
-                Toast.makeText(activity,
-                        next ? "Modo escritorio activado" : "Modo móvil activado",
-                        Toast.LENGTH_SHORT).show();
-                dismiss();
-                showSettings(activity, browser, returnToSidebar);
-            });
-            content.addView(desktopCurrent, rowParams(activity, 50));
-        }
-        content.addView(toggle(activity,
-                "Modo escritorio en pestañas nuevas",
-                "Usa agente y viewport de escritorio para las nuevas pestañas.",
-                KEY_DESKTOP_DEFAULT,
-                false,
-                preferences));
-        content.addView(toggle(activity,
-                "Gesto desde el borde",
-                "Desliza desde la izquierda para abrir el menú.",
-                KEY_EDGE_SWIPE,
-                true,
-                preferences));
-        content.addView(toggle(activity,
-                "Mantener pantalla encendida",
-                "Evita que Android apague la pantalla mientras navegas.",
-                KEY_KEEP_AWAKE,
-                false,
-                preferences));
+        List<View> cards = new ArrayList<>();
+        cards.add(settingsCategory(activity, "general", R.drawable.ic_settings_general,
+                "General", "Inicio, idioma, sesión y salida",
+                () -> showSettingsCategory(activity, browser, returnToSidebar, "general")));
+        cards.add(settingsCategory(activity, "appearance", R.drawable.ic_settings_appearance,
+                "Apariencia", "AMOLED, animaciones, interfaz y fondo",
+                () -> showSettingsCategory(activity, browser, returnToSidebar, "appearance")));
+        cards.add(settingsCategory(activity, "search", R.drawable.ic_settings_search,
+                "Búsqueda", "Motores, sugerencias y resultados",
+                () -> showSettingsCategory(activity, browser, returnToSidebar, "search")));
+        cards.add(settingsCategory(activity, "tabs", R.drawable.ic_settings_tabs,
+                "Pestañas y espacios", "Restauración, gestos, escritorio y accesos",
+                () -> showSettingsCategory(activity, browser, returnToSidebar, "tabs")));
+        cards.add(settingsCategory(activity, "downloads", R.drawable.ic_settings_downloads,
+                "Descargas", "Avisos, confirmaciones y uso de red",
+                () -> showSettingsCategory(activity, browser, returnToSidebar, "downloads")));
+        cards.add(settingsCategory(activity, "privacy", R.drawable.ic_settings_privacy,
+                "Privacidad y datos", "Historial, favoritos y limpieza",
+                () -> showSettingsCategory(activity, browser, returnToSidebar, "privacy")));
+        cards.add(settingsCategory(activity, "performance", R.drawable.ic_settings_performance,
+                "Rendimiento y almacenamiento", "Caché, renderizado y recuperación",
+                () -> showSettingsCategory(activity, browser, returnToSidebar, "performance")));
+        cards.add(settingsCategory(activity, "accessibility", R.drawable.ic_settings_accessibility,
+                "Accesibilidad", "Movimiento, sonido, vibración y pantalla",
+                () -> showSettingsCategory(activity, browser, returnToSidebar, "accessibility")));
+        cards.add(settingsCategory(activity, "advanced", R.drawable.ic_settings_advanced,
+                "Avanzado", "GeckoView, JavaScript y diagnósticos",
+                () -> showSettingsCategory(activity, browser, returnToSidebar, "advanced")));
 
-        content.addView(section(activity, "RENDIMIENTO Y ESTABILIDAD"));
-        content.addView(toggle(activity,
-                "Recuperación visual automática",
-                "Revalida la superficie de GeckoView si una página queda negra.",
-                KEY_PAGE_RECOVERY,
-                true,
-                preferences));
-        content.addView(toggle(activity,
-                "Modo ahorro de interfaz",
-                "Reduce la frecuencia de actualizaciones visuales.",
-                KEY_ECO_RENDER,
-                false,
-                preferences));
-        content.addView(toggle(activity,
-                "Mantenimiento automático de caché",
-                "Limpia únicamente cachés temporales cuando superan 160 MB.",
-                KEY_AUTO_CACHE,
-                true,
-                preferences));
-        TextView clearCache = actionRow(activity, "Limpiar caché temporal ahora", R.color.zen_accent);
-        clearCache.setOnClickListener(v -> clearTemporaryCaches(activity, true));
-        content.addView(clearCache, rowParams(activity, 50));
+        for (View card : cards) categories.addView(card);
 
-        content.addView(section(activity, "CONTENIDO"));
-        content.addView(toggle(activity,
-                "JavaScript",
-                "Se aplica al reiniciar Zen Browser.",
-                KEY_JAVASCRIPT,
-                true,
-                preferences));
-        content.addView(toggle(activity,
-                "Reproducción automática",
-                "Permite audio y video automático cuando el sitio lo solicita.",
-                KEY_AUTOPLAY,
-                true,
-                preferences));
+        search.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(
+                    CharSequence value, int start, int count, int after) { }
 
-        content.addView(section(activity, "HISTORIAL"));
-        content.addView(toggle(activity,
-                "Guardar historial",
-                "Registra páginas cargadas correctamente.",
-                KEY_SAVE_HISTORY,
-                true,
-                preferences));
-        content.addView(dropdownRow(
-                activity,
-                "Límite del historial",
-                historyLimit(activity) + " páginas",
-                () -> showHistoryLimitDropdown(activity)));
+            @Override public void onTextChanged(
+                    CharSequence value, int start, int before, int count) {
+                String query = value == null
+                        ? "" : value.toString().trim().toLowerCase(Locale.ROOT);
+                for (View card : cards) {
+                    Object tag = card.getTag();
+                    String keywords = tag == null ? "" : tag.toString();
+                    card.setVisibility(
+                            query.isEmpty() || keywords.contains(query)
+                                    ? View.VISIBLE : View.GONE);
+                }
+            }
 
-        content.addView(section(activity, "DESCARGAS"));
-        content.addView(toggle(activity,
-                "Confirmar antes de descargar",
-                "Pregunta antes de iniciar cada archivo.",
-                KEY_CONFIRM_DOWNLOAD,
-                false,
-                preferences));
-        content.addView(toggle(activity,
-                "Aviso visual de descarga",
-                "Muestra una tarjeta al iniciar la descarga.",
-                KEY_DOWNLOAD_NOTICE,
-                true,
-                preferences));
-        content.addView(toggle(activity,
-                "Permitir datos móviles",
-                "Autoriza descargas en redes medidas.",
-                KEY_DOWNLOADS_METERED,
-                true,
-                preferences));
-
-        content.addView(section(activity, "SEGURIDAD Y SALIDA"));
-        content.addView(toggle(activity,
-                "Confirmar al cerrar",
-                "Evita cerrar Zen Browser accidentalmente.",
-                KEY_CONFIRM_EXIT,
-                true,
-                preferences));
-
-        content.addView(section(activity, "DATOS"));
-        TextView clearHistory = actionRow(activity, "Borrar historial", R.color.zen_text);
-        clearHistory.setOnClickListener(v -> confirmClearHistory(activity, browser));
-        content.addView(clearHistory, rowParams(activity, 48));
-
-        TextView clearFavorites = actionRow(activity, "Borrar todos los favoritos", R.color.zen_text);
-        clearFavorites.setOnClickListener(v -> new AlertDialog.Builder(activity)
-                .setTitle("Borrar favoritos")
-                .setMessage("Esta acción no se puede deshacer.")
-                .setNegativeButton("Cancelar", null)
-                .setPositiveButton("Borrar", (dialog, which) -> {
-                    FavoritesStore.clear(activity);
-                    Toast.makeText(activity, "Favoritos eliminados", Toast.LENGTH_SHORT).show();
-                })
-                .show());
-        content.addView(clearFavorites, rowParams(activity, 48));
+            @Override public void afterTextChanged(Editable value) { }
+        });
 
         content.addView(section(activity, "VERSIÓN"));
         content.addView(infoCard(activity,
@@ -462,6 +307,358 @@ public final class ZenPanelController {
                 R.drawable.ic_settings,
                 content,
                 returnToSidebar);
+    }
+
+    private static View settingsCategory(
+            Activity activity,
+            String id,
+            int iconRes,
+            String title,
+            String summary,
+            Runnable action) {
+        LinearLayout row = new LinearLayout(activity);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(activity, 11), dp(activity, 5),
+                dp(activity, 8), dp(activity, 5));
+        row.setBackgroundResource(R.drawable.bg_settings_category);
+        row.setTag((id + " " + title + " " + summary).toLowerCase(Locale.ROOT));
+
+        ImageView icon = new ImageView(activity);
+        icon.setImageResource(iconRes);
+        row.addView(icon, new LinearLayout.LayoutParams(
+                dp(activity, 34), dp(activity, 34)));
+
+        LinearLayout labels = new LinearLayout(activity);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setGravity(Gravity.CENTER_VERTICAL);
+        TextView primary = text(activity, title, 14, R.color.zen_text);
+        primary.setTypeface(Typeface.DEFAULT_BOLD);
+        TextView secondary = text(activity, summary, 10, R.color.zen_muted);
+        secondary.setSingleLine(true);
+        secondary.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        labels.addView(primary);
+        labels.addView(secondary);
+        LinearLayout.LayoutParams labelsParams =
+                new LinearLayout.LayoutParams(0, dp(activity, 52), 1f);
+        labelsParams.setMargins(dp(activity, 11), 0, dp(activity, 6), 0);
+        row.addView(labels, labelsParams);
+
+        ImageView arrow = new ImageView(activity);
+        arrow.setImageResource(R.drawable.ic_chevron_right);
+        arrow.setImageTintList(ColorStateList.valueOf(
+                activity.getColor(R.color.zen_muted)));
+        row.addView(arrow, new LinearLayout.LayoutParams(
+                dp(activity, 22), dp(activity, 22)));
+
+        row.setOnClickListener(v -> action.run());
+        LinearLayout.LayoutParams params = rowParams(activity, 64);
+        params.setMargins(0, 0, 0, dp(activity, 7));
+        row.setLayoutParams(params);
+        return row;
+    }
+
+    private static void showSettingsCategory(
+            Activity activity,
+            BrowserRepository browser,
+            Runnable returnToSidebar,
+            String category) {
+        LinearLayout content = column(activity);
+        SharedPreferences preferences = ui(activity);
+        BrowserTab activeTab = browser.getActiveTab();
+        String title;
+        int icon;
+
+        switch (category) {
+            case "appearance":
+                title = "Apariencia";
+                icon = R.drawable.ic_settings_appearance;
+                content.addView(toggle(activity,
+                        "Animaciones suaves",
+                        "Transiciones del menú, pestañas y paneles.",
+                        KEY_ANIMATIONS, true, preferences));
+                content.addView(toggle(activity,
+                        "Fondo bonsái en Inicio",
+                        "Usa el fondo vertical u horizontal según la orientación.",
+                        KEY_HOME_BACKGROUND, true, preferences));
+                content.addView(toggle(activity,
+                        "Movimiento ambiental del fondo",
+                        "Acercamiento lento y discreto.",
+                        KEY_HOME_MOTION, true, preferences));
+                content.addView(toggle(activity,
+                        "Mostrar dirección en páginas",
+                        "Integra el dominio dentro de la barra superior.",
+                        KEY_SHOW_ADDRESS, true, preferences));
+                content.addView(toggle(activity,
+                        "Progreso minimalista",
+                        "Línea inferior y resplandor dentro de la dirección.",
+                        KEY_SHOW_PROGRESS, true, preferences));
+                break;
+
+            case "search":
+                title = "Búsqueda";
+                icon = R.drawable.ic_settings_search;
+                content.addView(dropdownRow(
+                        activity,
+                        "Motor de búsqueda",
+                        browser.getSearchEngine().displayName,
+                        () -> showEngineDropdown(activity, browser)));
+                content.addView(toggle(activity,
+                        "Sugerencias del historial",
+                        "Incluye direcciones visitadas.",
+                        KEY_SEARCH_SUGGESTIONS, true, preferences));
+                content.addView(toggle(activity,
+                        "Buscar en pestañas abiertas",
+                        "Muestra pestañas actuales entre los resultados.",
+                        KEY_SEARCH_TABS, true, preferences));
+                break;
+
+            case "tabs":
+                title = "Pestañas y espacios";
+                icon = R.drawable.ic_settings_tabs;
+                content.addView(toggle(activity,
+                        "Restaurar sesión al iniciar",
+                        "Recupera pestañas y espacios.",
+                        KEY_RESTORE_SESSION, true, preferences));
+                content.addView(toggle(activity,
+                        "Abrir accesos en pestaña nueva",
+                        "Los accesos editables no reemplazan la página actual.",
+                        KEY_QUICK_NEW_TAB, false, preferences));
+                content.addView(toggle(activity,
+                        "Deslizar para cerrar pestañas",
+                        "Cierra una pestaña con gesto lateral.",
+                        KEY_SWIPE_CLOSE, true, preferences));
+                content.addView(toggle(activity,
+                        "Mostrar botón cerrar",
+                        "Muestra la X en las filas.",
+                        KEY_TAB_CLOSE_BUTTON, true, preferences));
+                if (activeTab != null) {
+                    TextView desktop = actionRow(
+                            activity,
+                            "Sitio de escritorio para esta pestaña: "
+                                    + (activeTab.desktopMode ? "Activado" : "Desactivado"),
+                            R.color.zen_accent);
+                    desktop.setCompoundDrawablesWithIntrinsicBounds(
+                            R.drawable.ic_settings_tabs, 0, 0, 0);
+                    desktop.setCompoundDrawablePadding(dp(activity, 9));
+                    desktop.setOnClickListener(v -> {
+                        browser.setDesktopMode(activeTab.id, !activeTab.desktopMode);
+                        dismiss();
+                        showSettingsCategory(
+                                activity, browser, returnToSidebar, "tabs");
+                    });
+                    content.addView(desktop, rowParams(activity, 50));
+                }
+                content.addView(toggle(activity,
+                        "Modo escritorio en pestañas nuevas",
+                        "Usa agente y viewport de escritorio.",
+                        KEY_DESKTOP_DEFAULT, false, preferences));
+                break;
+
+            case "downloads":
+                title = "Descargas";
+                icon = R.drawable.ic_settings_downloads;
+                content.addView(toggle(activity,
+                        "Confirmar antes de descargar",
+                        "Pregunta antes de iniciar cada archivo.",
+                        KEY_CONFIRM_DOWNLOAD, false, preferences));
+                content.addView(toggle(activity,
+                        "Aviso visual Zen",
+                        "Tarjeta con velocidad, tamaño, porcentaje y progreso inferior.",
+                        KEY_DOWNLOAD_NOTICE, true, preferences));
+                content.addView(toggle(activity,
+                        "Permitir datos móviles",
+                        "Autoriza descargas en redes medidas.",
+                        KEY_DOWNLOADS_METERED, true, preferences));
+                TextView openDownloads = actionRow(
+                        activity, "Abrir administrador de descargas", R.color.zen_accent);
+                openDownloads.setOnClickListener(v ->
+                        showDownloads(activity, browser,
+                                () -> showSettingsCategory(
+                                        activity, browser, returnToSidebar, "downloads")));
+                content.addView(openDownloads, rowParams(activity, 50));
+                break;
+
+            case "privacy":
+                title = "Privacidad y datos";
+                icon = R.drawable.ic_settings_privacy;
+                content.addView(toggle(activity,
+                        "Guardar historial",
+                        "Registra páginas cargadas correctamente.",
+                        KEY_SAVE_HISTORY, true, preferences));
+                content.addView(dropdownRow(
+                        activity,
+                        "Límite del historial",
+                        historyLimit(activity) + " páginas",
+                        () -> showHistoryLimitDropdown(activity)));
+                TextView clearHistory = actionRow(
+                        activity, "Borrar historial", R.color.zen_text);
+                clearHistory.setOnClickListener(v ->
+                        confirmClearHistory(activity, browser));
+                content.addView(clearHistory, rowParams(activity, 48));
+                TextView clearFavorites = actionRow(
+                        activity, "Borrar todos los favoritos", R.color.zen_text);
+                clearFavorites.setOnClickListener(v ->
+                        new AlertDialog.Builder(activity)
+                                .setTitle("Borrar favoritos")
+                                .setMessage("Esta acción no se puede deshacer.")
+                                .setNegativeButton("Cancelar", null)
+                                .setPositiveButton("Borrar", (dialog, which) -> {
+                                    FavoritesStore.clear(activity);
+                                    Toast.makeText(
+                                            activity,
+                                            "Favoritos eliminados",
+                                            Toast.LENGTH_SHORT).show();
+                                })
+                                .show());
+                content.addView(clearFavorites, rowParams(activity, 48));
+                break;
+
+            case "performance":
+                title = "Rendimiento y almacenamiento";
+                icon = R.drawable.ic_settings_performance;
+                content.addView(toggle(activity,
+                        "Recuperación visual automática",
+                        "Protege el contenido hasta la primera pintura válida.",
+                        KEY_PAGE_RECOVERY, true, preferences));
+                content.addView(toggle(activity,
+                        "Modo ahorro de interfaz",
+                        "Reduce actualizaciones visuales en dispositivos modestos.",
+                        KEY_ECO_RENDER, false, preferences));
+                content.addView(toggle(activity,
+                        "Mantenimiento automático de caché",
+                        "Limpia solo temporales cuando superan 160 MB.",
+                        KEY_AUTO_CACHE, true, preferences));
+                TextView clearCache = actionRow(
+                        activity, "Limpiar caché temporal ahora", R.color.zen_accent);
+                clearCache.setOnClickListener(v ->
+                        clearTemporaryCaches(activity, true));
+                content.addView(clearCache, rowParams(activity, 50));
+                TextView clearIcons = actionRow(
+                        activity, "Limpiar iconos y vistas previas", R.color.zen_text);
+                clearIcons.setOnClickListener(v -> {
+                    RemoteAssetLoader.clear(activity);
+                    Toast.makeText(
+                            activity,
+                            "Caché visual limpiada",
+                            Toast.LENGTH_SHORT).show();
+                });
+                content.addView(clearIcons, rowParams(activity, 50));
+                break;
+
+            case "accessibility":
+                title = "Accesibilidad";
+                icon = R.drawable.ic_settings_accessibility;
+                content.addView(toggle(activity,
+                        "Sonido de tecla mecánica",
+                        "Reproduce el clic de la tecla Z.",
+                        KEY_KEY_SOUND, true, preferences));
+                content.addView(toggle(activity,
+                        "Respuesta háptica de la tecla",
+                        "Vibración ligera al presionar.",
+                        KEY_KEY_HAPTICS, true, preferences));
+                content.addView(toggle(activity,
+                        "Gesto desde el borde",
+                        "Desliza desde la izquierda para abrir el menú.",
+                        KEY_EDGE_SWIPE, true, preferences));
+                content.addView(toggle(activity,
+                        "Mantener pantalla encendida",
+                        "Evita que Android apague la pantalla.",
+                        KEY_KEEP_AWAKE, false, preferences));
+                break;
+
+            case "advanced":
+                title = "Avanzado";
+                icon = R.drawable.ic_settings_advanced;
+                content.addView(toggle(activity,
+                        "JavaScript",
+                        "Se aplica al reiniciar Zen Browser.",
+                        KEY_JAVASCRIPT, true, preferences));
+                content.addView(toggle(activity,
+                        "Reproducción automática",
+                        "Permite audio y video cuando el sitio lo solicita.",
+                        KEY_AUTOPLAY, true, preferences));
+                content.addView(infoCard(activity,
+                        "Motor: GeckoView\nVersión: " + BuildConfig.VERSION_NAME
+                                + "\nAPI Android: " + android.os.Build.VERSION.SDK_INT));
+                break;
+
+            default:
+                title = "General";
+                icon = R.drawable.ic_settings_general;
+                content.addView(homePageEditor(activity, preferences));
+                content.addView(toggle(activity,
+                        "Restaurar sesión al iniciar",
+                        "Recupera pestañas y espacios después de cerrar.",
+                        KEY_RESTORE_SESSION, true, preferences));
+                content.addView(toggle(activity,
+                        "Confirmar al cerrar",
+                        "Evita salir accidentalmente.",
+                        KEY_CONFIRM_EXIT, true, preferences));
+                break;
+        }
+
+        TextView reset = actionRow(
+                activity,
+                "Restablecer esta categoría",
+                R.color.zen_muted);
+        reset.setOnClickListener(v -> confirmResetCategory(
+                activity, browser, returnToSidebar, category));
+        LinearLayout.LayoutParams resetParams = rowParams(activity, 48);
+        resetParams.setMargins(0, dp(activity, 13), 0, dp(activity, 7));
+        content.addView(reset, resetParams);
+
+        Runnable backToSettings =
+                () -> showSettings(activity, browser, returnToSidebar);
+        showPanel(activity, title, icon, content, backToSettings);
+    }
+
+    private static void confirmResetCategory(
+            Activity activity,
+            BrowserRepository browser,
+            Runnable returnToSidebar,
+            String category) {
+        new AlertDialog.Builder(activity)
+                .setTitle("Restablecer categoría")
+                .setMessage("Las opciones de esta sección volverán a sus valores predeterminados.")
+                .setNegativeButton("Cancelar", null)
+                .setPositiveButton("Restablecer", (dialog, which) -> {
+                    SharedPreferences.Editor editor = ui(activity).edit();
+                    for (String key : categoryKeys(category)) editor.remove(key);
+                    editor.apply();
+                    notifyChanged(activity);
+                    dismiss();
+                    showSettingsCategory(activity, browser, returnToSidebar, category);
+                })
+                .show();
+    }
+
+    private static String[] categoryKeys(String category) {
+        switch (category) {
+            case "appearance":
+                return new String[]{
+                        KEY_ANIMATIONS, KEY_HOME_BACKGROUND, KEY_HOME_MOTION,
+                        KEY_SHOW_ADDRESS, KEY_SHOW_PROGRESS};
+            case "search":
+                return new String[]{KEY_SEARCH_SUGGESTIONS, KEY_SEARCH_TABS};
+            case "tabs":
+                return new String[]{
+                        KEY_RESTORE_SESSION, KEY_QUICK_NEW_TAB, KEY_SWIPE_CLOSE,
+                        KEY_TAB_CLOSE_BUTTON, KEY_DESKTOP_DEFAULT};
+            case "downloads":
+                return new String[]{
+                        KEY_CONFIRM_DOWNLOAD, KEY_DOWNLOAD_NOTICE, KEY_DOWNLOADS_METERED};
+            case "privacy":
+                return new String[]{KEY_SAVE_HISTORY, KEY_HISTORY_LIMIT};
+            case "performance":
+                return new String[]{KEY_PAGE_RECOVERY, KEY_ECO_RENDER, KEY_AUTO_CACHE};
+            case "accessibility":
+                return new String[]{
+                        KEY_KEY_SOUND, KEY_KEY_HAPTICS, KEY_EDGE_SWIPE, KEY_KEEP_AWAKE};
+            case "advanced":
+                return new String[]{KEY_JAVASCRIPT, KEY_AUTOPLAY};
+            default:
+                return new String[]{KEY_HOME_URL, KEY_RESTORE_SESSION, KEY_CONFIRM_EXIT};
+        }
     }
 
     private static View homePageEditor(Activity activity, SharedPreferences preferences) {
@@ -624,14 +821,27 @@ public final class ZenPanelController {
                 .show();
     }
 
+    private static final class DownloadCardBinding {
+        String id;
+        FrameLayout root;
+        TextView state;
+        TextView name;
+        TextView metrics;
+        TextView action;
+        ProgressBar progress;
+    }
+
     public static void showDownloads(
             Activity activity, BrowserRepository browser, Runnable returnToSidebar) {
         LinearLayout content = column(activity);
 
         TextView androidDownloads = actionRow(
                 activity,
-                "Abrir descargas de Android",
+                "Abrir carpeta de descargas",
                 R.color.zen_accent);
+        androidDownloads.setCompoundDrawablesWithIntrinsicBounds(
+                R.drawable.ic_downloads, 0, 0, 0);
+        androidDownloads.setCompoundDrawablePadding(dp(activity, 9));
         androidDownloads.setOnClickListener(v -> {
             try {
                 activity.startActivity(new Intent("android.intent.action.VIEW_DOWNLOADS"));
@@ -644,6 +854,14 @@ public final class ZenPanelController {
         });
         content.addView(androidDownloads, rowParams(activity, 48));
 
+        TextView hint = text(
+                activity,
+                "Mantén pulsada una descarga para quitarla de la lista.",
+                10,
+                R.color.zen_muted);
+        hint.setPadding(dp(activity, 4), 0, dp(activity, 4), dp(activity, 8));
+        content.addView(hint);
+
         LinearLayout listHolder = new LinearLayout(activity);
         listHolder.setOrientation(LinearLayout.VERTICAL);
         content.addView(listHolder);
@@ -652,7 +870,7 @@ public final class ZenPanelController {
                 activity, browser, returnToSidebar, listHolder);
         render.run();
         showPanel(activity, "Descargas", R.drawable.ic_downloads, content, returnToSidebar);
-        startTicker(render, 500L);
+        startTicker(render, 400L);
     }
 
     private static void renderDownloadList(
@@ -660,89 +878,242 @@ public final class ZenPanelController {
             BrowserRepository browser,
             Runnable returnToSidebar,
             LinearLayout holder) {
-        holder.removeAllViews();
         List<DownloadStore.Record> records = DownloadStore.list(activity);
+
         if (records.isEmpty()) {
-            holder.addView(infoCard(activity, "Todavía no hay descargas."));
+            if (holder.getChildCount() != 1
+                    || !"downloads-empty".equals(holder.getChildAt(0).getTag())) {
+                holder.removeAllViews();
+                View empty = infoCard(activity, "Todavía no hay descargas.");
+                empty.setTag("downloads-empty");
+                holder.addView(empty);
+            }
             return;
         }
+
+        Set<String> currentIds = new HashSet<>();
+        int targetIndex = 0;
+
         for (DownloadStore.Record record : records) {
-            holder.addView(downloadRow(activity, browser, returnToSidebar, record));
+            currentIds.add(record.id);
+            DownloadCardBinding binding = findDownloadBinding(holder, record.id);
+            if (binding == null) {
+                binding = createDownloadCard(
+                        activity, browser, returnToSidebar, record.id);
+            }
+
+            bindDownloadCard(activity, binding, record);
+
+            int currentIndex = holder.indexOfChild(binding.root);
+            if (currentIndex < 0) {
+                holder.addView(binding.root, Math.min(targetIndex, holder.getChildCount()));
+            } else if (currentIndex != targetIndex) {
+                holder.removeView(binding.root);
+                holder.addView(binding.root, Math.min(targetIndex, holder.getChildCount()));
+            }
+            targetIndex++;
+        }
+
+        for (int index = holder.getChildCount() - 1; index >= 0; index--) {
+            View child = holder.getChildAt(index);
+            Object tag = child.getTag();
+            if (tag instanceof DownloadCardBinding) {
+                DownloadCardBinding binding = (DownloadCardBinding) tag;
+                if (!currentIds.contains(binding.id)) holder.removeViewAt(index);
+            } else {
+                holder.removeViewAt(index);
+            }
         }
     }
 
-    private static View downloadRow(
+    private static DownloadCardBinding findDownloadBinding(
+            LinearLayout holder, String id) {
+        for (int index = 0; index < holder.getChildCount(); index++) {
+            Object tag = holder.getChildAt(index).getTag();
+            if (tag instanceof DownloadCardBinding) {
+                DownloadCardBinding binding = (DownloadCardBinding) tag;
+                if (id.equals(binding.id)) return binding;
+            }
+        }
+        return null;
+    }
+
+    private static DownloadCardBinding createDownloadCard(
             Activity activity,
             BrowserRepository browser,
             Runnable returnToSidebar,
+            String id) {
+        DownloadCardBinding binding = new DownloadCardBinding();
+        binding.id = id;
+
+        FrameLayout card = new FrameLayout(activity);
+        card.setBackgroundResource(R.drawable.bg_download_card_edge);
+        card.setClickable(true);
+        card.setFocusable(true);
+        card.setElevation(dp(activity, 2));
+        binding.root = card;
+        card.setTag(binding);
+
+        LinearLayout body = new LinearLayout(activity);
+        body.setGravity(Gravity.CENTER_VERTICAL);
+        body.setPadding(
+                dp(activity, 10), dp(activity, 8),
+                dp(activity, 7), dp(activity, 11));
+
+        FrameLayout iconShell = new FrameLayout(activity);
+        iconShell.setBackgroundResource(R.drawable.bg_download_icon_glow);
+        ImageView icon = new ImageView(activity);
+        icon.setImageResource(R.drawable.ic_downloads);
+        icon.setImageTintList(ColorStateList.valueOf(
+                activity.getColor(R.color.zen_accent)));
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        iconShell.addView(icon, new FrameLayout.LayoutParams(
+                dp(activity, 30), dp(activity, 30), Gravity.CENTER));
+        body.addView(iconShell, new LinearLayout.LayoutParams(
+                dp(activity, 52), dp(activity, 52)));
+
+        LinearLayout labels = new LinearLayout(activity);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setGravity(Gravity.CENTER_VERTICAL);
+        labels.setPadding(dp(activity, 10), 0, dp(activity, 7), 0);
+
+        binding.state = text(activity, "Descargando", 14, R.color.zen_text);
+        binding.state.setTypeface(Typeface.DEFAULT_BOLD);
+        binding.state.setSingleLine(true);
+
+        binding.name = text(activity, "Archivo", 11, R.color.zen_muted);
+        binding.name.setSingleLine(true);
+        binding.name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+
+        binding.metrics = text(
+                activity, "Calculando velocidad", 10, R.color.zen_muted);
+        binding.metrics.setSingleLine(true);
+        binding.metrics.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        binding.metrics.setPadding(0, dp(activity, 4), 0, 0);
+
+        labels.addView(binding.state);
+        labels.addView(binding.name);
+        labels.addView(binding.metrics);
+        body.addView(labels, new LinearLayout.LayoutParams(
+                0, dp(activity, 67), 1f));
+
+        binding.action = text(activity, "VER", 11, R.color.zen_accent);
+        binding.action.setTypeface(Typeface.DEFAULT_BOLD);
+        binding.action.setGravity(Gravity.CENTER);
+        binding.action.setPadding(dp(activity, 9), 0, dp(activity, 9), 0);
+        binding.action.setBackgroundResource(R.drawable.bg_download_action);
+        body.addView(binding.action, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 40)));
+
+        card.addView(body, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        binding.progress = new ProgressBar(
+                activity, null, android.R.attr.progressBarStyleHorizontal);
+        binding.progress.setMax(100);
+        binding.progress.setProgressDrawable(
+                activity.getDrawable(R.drawable.progress_download_edge));
+        binding.progress.setProgressBackgroundTintList(
+                ColorStateList.valueOf(Color.TRANSPARENT));
+
+        FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(activity, 4),
+                Gravity.BOTTOM);
+        progressParams.leftMargin = dp(activity, 1);
+        progressParams.rightMargin = dp(activity, 1);
+        progressParams.bottomMargin = dp(activity, 1);
+        card.addView(binding.progress, progressParams);
+
+        LinearLayout.LayoutParams outer = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(activity, 90));
+        outer.setMargins(0, 0, 0, dp(activity, 8));
+        card.setLayoutParams(outer);
+
+        card.setOnLongClickListener(v -> {
+            DownloadStore.Record record = DownloadStore.get(activity, binding.id);
+            String name = record == null || record.name == null
+                    ? "esta descarga" : record.name;
+            new AlertDialog.Builder(activity)
+                    .setTitle("Quitar descarga")
+                    .setMessage("¿Quitar \"" + name + "\" de la lista?")
+                    .setNegativeButton("Cancelar", null)
+                    .setPositiveButton("Quitar", (dialog, which) ->
+                            DownloadStore.remove(activity, binding.id))
+                    .show();
+            return true;
+        });
+        return binding;
+    }
+
+    private static void bindDownloadCard(
+            Activity activity,
+            DownloadCardBinding binding,
             DownloadStore.Record record) {
-        LinearLayout card = new LinearLayout(activity);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(activity, 12), dp(activity, 9), dp(activity, 12), dp(activity, 9));
-        card.setBackgroundResource(R.drawable.bg_panel_card);
-
-        TextView name = text(activity, record.name, 14, R.color.zen_text);
-        name.setSingleLine(true);
-        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        card.addView(name);
-
-        TextView status = text(activity, downloadStatus(record), 11, R.color.zen_muted);
-        status.setPadding(0, dp(activity, 4), 0, dp(activity, 4));
-        card.addView(status);
+        binding.name.setText(record.name == null || record.name.trim().isEmpty()
+                ? "Archivo" : record.name);
 
         boolean active = DownloadStore.DOWNLOADING.equals(record.status)
                 || DownloadStore.QUEUED.equals(record.status);
-        if (active || DownloadStore.COMPLETE.equals(record.status)) {
-            ProgressBar progress = new ProgressBar(
-                    activity, null, android.R.attr.progressBarStyleHorizontal);
-            progress.setMax(100);
-            progress.setProgressDrawable(activity.getDrawable(R.drawable.progress_download));
-            progress.setProgressBackgroundTintList(
-                    ColorStateList.valueOf(Color.TRANSPARENT));
-            progress.setIndeterminate(active && record.total <= 0L);
-            if (!progress.isIndeterminate()) {
-                int percent = DownloadStore.COMPLETE.equals(record.status) ? 100
-                        : record.total > 0L
-                        ? (int) Math.min(100L, record.bytes * 100L / record.total)
-                        : 0;
-                progress.setProgress(percent);
-            }
-            LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 4));
-            progressParams.setMargins(0, 0, 0, dp(activity, 5));
-            card.addView(progress, progressParams);
+        int percent = record.total > 0L
+                ? (int) Math.min(100L, record.bytes * 100L / record.total)
+                : 0;
+
+        binding.progress.setVisibility(View.VISIBLE);
+        binding.progress.setIndeterminate(active && record.total <= 0L);
+        if (!binding.progress.isIndeterminate()) {
+            binding.progress.setProgress(
+                    DownloadStore.COMPLETE.equals(record.status) ? 100 : percent,
+                    true);
         }
 
-        LinearLayout actions = new LinearLayout(activity);
-        actions.setGravity(Gravity.END);
         if (DownloadStore.COMPLETE.equals(record.status)) {
-            actions.addView(smallAction(activity, "Abrir", v -> openDownload(activity, record)));
-        } else if (active) {
-            actions.addView(smallAction(activity, "Cancelar", v -> {
-                DownloadStore.cancel(activity, record.id);
-                dismiss();
-                showDownloads(activity, browser, returnToSidebar);
-            }));
+            binding.state.setText("Descarga completada");
+            binding.metrics.setText(readableSize(record.bytes) + "   ·   100%");
+            binding.action.setText("VER");
+            binding.action.setOnClickListener(v -> openDownload(activity, record));
+        } else if (DownloadStore.FAILED.equals(record.status)) {
+            binding.state.setText("Error en la descarga");
+            binding.metrics.setText(record.error == null || record.error.trim().isEmpty()
+                    ? "No se pudo completar" : record.error);
+            binding.progress.setVisibility(View.INVISIBLE);
+            binding.action.setText("REINTENTAR");
+            binding.action.setOnClickListener(v ->
+                    DownloadStore.retry(activity, record.id));
+        } else if (DownloadStore.CANCELLED.equals(record.status)) {
+            binding.state.setText("Descarga cancelada");
+            binding.metrics.setText("Mantén pulsado para quitarla");
+            binding.progress.setVisibility(View.INVISIBLE);
+            binding.action.setText("REINTENTAR");
+            binding.action.setOnClickListener(v ->
+                    DownloadStore.retry(activity, record.id));
         } else {
-            actions.addView(smallAction(activity, "Reintentar", v -> {
-                DownloadStore.retry(activity, record.id);
-                dismiss();
-                showDownloads(activity, browser, returnToSidebar);
-            }));
+            binding.state.setText(DownloadStore.QUEUED.equals(record.status)
+                    ? "Descarga en espera" : "Descargando");
+            binding.metrics.setText(downloadMetrics(record));
+            binding.action.setText("CANCELAR");
+            binding.action.setOnClickListener(v ->
+                    DownloadStore.cancel(activity, record.id));
         }
-        actions.addView(smallAction(activity, "Quitar", v -> {
-            DownloadStore.remove(activity, record.id);
-            dismiss();
-            showDownloads(activity, browser, returnToSidebar);
-        }));
-        card.addView(actions);
 
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.setMargins(0, 0, 0, dp(activity, 7));
-        card.setLayoutParams(params);
-        return card;
+        binding.root.setContentDescription(
+                binding.state.getText() + ". " + binding.name.getText()
+                        + ". " + binding.metrics.getText());
+    }
+
+    private static String downloadMetrics(DownloadStore.Record record) {
+        String rate = record.bytesPerSecond > 0L
+                ? readableSize(record.bytesPerSecond) + "/s"
+                : "Calculando velocidad";
+        String amount = record.total > 0L
+                ? readableSize(record.bytes) + " / " + readableSize(record.total)
+                : readableSize(record.bytes);
+        if (record.total <= 0L) return rate + "   ·   " + amount;
+        int percent = (int) Math.min(
+                100L, record.bytes * 100L / record.total);
+        return rate + "   ·   " + amount + "   ·   " + percent + "%";
     }
 
     public static void showHistory(

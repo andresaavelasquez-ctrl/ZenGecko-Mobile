@@ -138,3 +138,24 @@
 - Añade un fondo horizontal específico suministrado por el usuario.
 - Incrementa `versionCode` a 13 y `versionName` a 0.1.12.
 - Artefacto: `ZenBrowser-v0.1.12-debug`.
+
+## 0.1.13 — Fluid Navigation, Editable Access & Web Context
+
+- Sustituye el círculo central de carga por progreso inferior, resplandor y cubierta AMOLED.
+- Conserva el fotograma anterior durante cambios de pestaña para evitar gris y destellos.
+- Usa la primera pintura de GeckoView para retirar la transición.
+- Muestra aviso de carga lenta solo después de varios segundos.
+- Mantiene la misma GeckoSession y no recarga pestañas existentes al seleccionarlas.
+- Añade accesos rápidos persistentes y separados por espacio.
+- Permite crear, editar, eliminar y reorganizar accesos.
+- Detecta favicons y manifiestos web con caché visual limitada.
+- Añade transición lateral entre Personal, Trabajo y Educación.
+- Reorganiza Configuración en nueve categorías con buscador y restablecimiento.
+- Añade menú contextual AMOLED para imágenes, enlaces, video y audio.
+- Permite previsualizar, descargar, copiar dirección, copiar archivo y compartir.
+- Usa FileProvider para compartir contenido temporal de forma segura.
+- Rediseña notificaciones y tarjetas de descargas con progreso en el borde inferior.
+- Actualiza velocidad, porcentaje y tamaño sin reconstruir toda la lista.
+- Suaviza la velocidad mostrada para evitar saltos bruscos.
+- Reduce altura de pestañas y accesos rápidos.
+- Artefacto: `ZenBrowser-v0.1.13-debug`.

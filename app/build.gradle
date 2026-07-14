@@ -13,8 +13,8 @@ android {
         applicationId 'com.andres.zengecko'
         minSdk 26
         targetSdk 36
-        versionCode 13
-        versionName '0.1.12'
+        versionCode 14
+        versionName '0.1.13'
     }
 
     signingConfigs {
@@ -65,5 +65,6 @@ android {
 def geckoVersion = providers.gradleProperty('GECKOVIEW_VERSION').getOrElse('152.+')
 
 dependencies {
+    implementation 'androidx.core:core:1.15.0'
     implementation "org.mozilla.geckoview:geckoview:${geckoVersion}"
 }

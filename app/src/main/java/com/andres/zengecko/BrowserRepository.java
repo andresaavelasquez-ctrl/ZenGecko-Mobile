@@ -6,6 +6,7 @@ import android.net.Uri;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.net.URI;
 import java.util.UUID;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -27,6 +28,12 @@ public final class BrowserRepository {
         default void onPaintStatusReset(GeckoSession session) { }
         default void onFirstComposite(GeckoSession session) { }
         default void onFirstContentfulPaint(GeckoSession session) { }
+        default void onContextMenu(
+                GeckoSession session,
+                int screenX,
+                int screenY,
+                GeckoSession.ContentDelegate.ContextElement element) { }
+        default void onPageIcon(GeckoSession session, String iconUrl) { }
     }
 
     private static final String PREFS = "browser_state";
@@ -336,6 +343,26 @@ public final class BrowserRepository {
                 tab.hasValidPaint = true;
                 if (tab.id.equals(activeTabId)) notifyFirstContentfulPaint(source);
             }
+
+            @Override public void onContextMenu(
+                    GeckoSession source,
+                    int screenX,
+                    int screenY,
+                    GeckoSession.ContentDelegate.ContextElement element) {
+                if (tab.id.equals(activeTabId)) {
+                    notifyContextMenu(source, screenX, screenY, element);
+                }
+            }
+
+            @Override public void onWebAppManifest(
+                    GeckoSession source,
+                    JSONObject manifest) {
+                String iconUrl = bestManifestIcon(tab.url, manifest);
+                if (!iconUrl.isEmpty() && tab.id.equals(activeTabId)) {
+                    notifyPageIcon(source, iconUrl);
+                }
+            }
+
             @Override public void onCrash(GeckoSession ignored) {
                 recoverCrashedTab(tab);
             }
@@ -454,6 +481,36 @@ public final class BrowserRepository {
         notifyObservers();
     }
 
+
+
+    private static String bestManifestIcon(String pageUrl, JSONObject manifest) {
+        if (manifest == null) return "";
+        JSONArray icons = manifest.optJSONArray("icons");
+        if (icons == null || icons.length() == 0) return "";
+        String selected = "";
+        int bestScore = -1;
+        for (int index = 0; index < icons.length(); index++) {
+            JSONObject icon = icons.optJSONObject(index);
+            if (icon == null) continue;
+            String src = icon.optString("src", "");
+            if (src.isEmpty()) continue;
+            String sizes = icon.optString("sizes", "");
+            int score = sizes.contains("512") ? 512
+                    : sizes.contains("256") ? 256
+                    : sizes.contains("192") ? 192
+                    : sizes.contains("128") ? 128 : 64;
+            if (score > bestScore) {
+                selected = src;
+                bestScore = score;
+            }
+        }
+        if (selected.isEmpty()) return "";
+        try {
+            return new URI(pageUrl).resolve(selected).toString();
+        } catch (Exception ignored) {
+            return selected;
+        }
+    }
 
     private boolean isDisposableBlank(BrowserTab tab) {
         return tab != null && !tab.essential && !tab.pinned
@@ -624,6 +681,23 @@ public final class BrowserRepository {
         for (Observer observer : copy) observer.onBrowserStateChanged();
     }
 
+
+
+    private void notifyContextMenu(
+            GeckoSession session,
+            int screenX,
+            int screenY,
+            GeckoSession.ContentDelegate.ContextElement element) {
+        List<Observer> copy = new ArrayList<>(observers);
+        for (Observer observer : copy) {
+            observer.onContextMenu(session, screenX, screenY, element);
+        }
+    }
+
+    private void notifyPageIcon(GeckoSession session, String iconUrl) {
+        List<Observer> copy = new ArrayList<>(observers);
+        for (Observer observer : copy) observer.onPageIcon(session, iconUrl);
+    }
 
     private void notifyPageFinished(GeckoSession session, boolean success) {
         List<Observer> copy = new ArrayList<>(observers);

@@ -1,108 +1,149 @@
-# Zen Browser v0.1.12 — Stable Paint & Live Downloads
+# Zen Browser v0.1.13 — Fluid Navigation & Web Context
 
-Navegador Android experimental construido con **GeckoView real**, interfaz AMOLED y navegación por pestañas y espacios. No utiliza Android WebView.
+Zen Browser para Android basado en **GeckoView real**, con interfaz AMOLED, espacios de navegación y administración de pestañas.
 
 > Proyecto comunitario no oficial. No es una distribución oficial de Zen Browser.
 
-## Prioridad de esta versión
+## Objetivo de esta versión
 
-La v0.1.12 se concentra en corregir el fallo más importante detectado durante las pruebas: algunas páginas terminaban mostrando una superficie gris después de cargar y solo volvían a verse al recargarlas.
+La v0.1.13 reúne en un solo paquete las mejoras de navegación, accesos rápidos, configuración, menús contextuales web y descargas que se planificaron después de la v0.1.12.
 
-La recuperación anterior forzaba varias invalidaciones de `GeckoView`. Esa estrategia fue retirada. La interfaz ahora sigue el estado real del compositor mediante los eventos de primera composición, primera pintura de contenido y reinicio del estado de pintura.
+La prioridad es reducir reconstrucciones visibles, conservar la sesión de cada pestaña y retirar las cubiertas de transición únicamente cuando GeckoView confirma contenido pintado.
 
-## Novedades de v0.1.12
+## Navegación y carga
 
-### Pintado estable de páginas
+- Elimina el círculo central permanente y los textos normales de “Cargando” o “Renderizando”.
+- Integra una línea de progreso de 3 dp debajo de la barra superior.
+- Añade un resplandor morado discreto dentro de la barra de dirección.
+- Mantiene una cubierta AMOLED durante el intervalo sin pintura válida.
+- Retira la cubierta mediante un `crossfade` al recibir `onFirstContentfulPaint`.
+- Muestra un aviso pequeño solamente cuando la carga supera aproximadamente seis segundos.
+- El aviso lento ofrece **REINTENTAR** y **CANCELAR**.
+- Conserva la misma `GeckoSession` de una pestaña existente.
+- Usa una captura temporal de la superficie anterior durante cambios de pestaña.
+- Evita mostrar Inicio durante recargas, redirecciones y cambios entre páginas.
+- El botón Atrás cierra primero los menús contextuales antes de navegar.
 
-- Nueva protección de primera pintura, vinculada a la pestaña y navegación activas.
-- La capa de espera desaparece al recibir la primera pintura real de contenido.
-- Eliminadas las invalidaciones repetidas que podían dejar la superficie gris.
-- Recuperación excepcional con límite de tiempo, sin recarga automática destructiva.
-- Restauración de una pestaña si el proceso de contenido de Gecko falla.
-- La pantalla de Inicio usa un estado explícito y ya no aparece durante recargas o redirecciones.
+## Pestañas y espacios
 
-### Navegación Atrás
+- Filas de pestaña más compactas.
+- Título y dominio cuando existe espacio.
+- Solo se anima la pestaña seleccionada.
+- Cambio entre Personal, Trabajo y Educación mediante desplazamiento lateral y opacidad.
+- La transición utiliza únicamente `translationX` y `alpha`.
+- Conserva los iconos vectoriales propios de cada espacio.
+- Seleccionar una pestaña abierta no vuelve a cargar su URL.
 
-- Un solo controlador para el botón y el gesto Atrás de Android.
-- Prioridad: cerrar paneles, salir de fullscreen, retroceder en la página, volver a la pestaña anterior y finalmente confirmar la salida.
-- Integración con el dispatcher moderno de Android 13 o superior.
+## Accesos rápidos editables
 
-### Descargas en tiempo real
+- Accesos separados por espacio.
+- Persistencia después de reiniciar la aplicación.
+- Toque para abrir.
+- Pulsación larga para editar.
+- Arrastre para reorganizar.
+- Editor con:
+  - nombre;
+  - dirección;
+  - URL de icono;
+  - detección automática;
+  - vista previa;
+  - guardar;
+  - eliminar.
+- Máximo de ocho accesos por espacio.
+- Iconos locales para sitios conocidos.
+- Detección de iconos desde el manifiesto web y `/favicon.ico`.
+- Caché visual limitada para evitar crecimiento descontrolado.
 
-- Tarjeta flotante con:
-  - barra de progreso;
-  - porcentaje;
-  - velocidad actual;
-  - bytes descargados y tamaño total;
-  - estados de espera, descarga, finalización y error.
-- El panel de Descargas se actualiza automáticamente mientras permanece abierto.
-- Cancelar, reintentar, abrir y quitar continúan disponibles.
-- Menos registros históricos para evitar crecimiento innecesario de datos locales.
+## Configuración categorizada
 
-### Rendimiento y almacenamiento
+La pantalla de Ajustes se organiza en:
 
-- Solo la pestaña visible permanece activa.
-- Multimedia suspendida automáticamente en pestañas inactivas.
-- Recuperación de pestañas cuyo proceso haya fallado.
-- Mantenimiento opcional de cachés temporales cuando superan un límite razonable.
-- Acción manual para limpiar solo las cachés, sin borrar cookies ni sesiones.
-- Menos reconstrucciones e invalidaciones de la superficie web.
+1. General
+2. Apariencia
+3. Búsqueda
+4. Pestañas y espacios
+5. Descargas
+6. Privacidad y datos
+7. Rendimiento y almacenamiento
+8. Accesibilidad
+9. Avanzado
 
-### Interfaz
+También incorpora:
 
-- Barra superior más integrada, redondeada y con menos divisiones visuales.
-- Botones con estado presionado sutil en lugar de cuadrados permanentes.
-- Barra de dirección suavizada.
-- Panel vertical más compacto.
-- Accesos rápidos más pequeños.
-- Selector de espacios centrado y con iconos:
-  - Personal;
-  - Trabajo;
-  - Estudio.
+- búsqueda de categorías;
+- icono y resumen por categoría;
+- navegación secundaria dentro del mismo panel;
+- botón Atrás hacia la portada de Ajustes;
+- restablecimiento independiente por categoría;
+- modo escritorio por pestaña;
+- limpieza controlada de caché visual y temporal.
 
-### Modo escritorio
+## Menú contextual web
 
-- Modo escritorio individual para la pestaña actual.
-- Opción para abrir nuevas pestañas en modo escritorio por defecto.
-- Cambia el agente de usuario y el viewport antes de recargar la página.
+Al mantener pulsado un elemento compatible, Zen Browser puede mostrar opciones para:
 
-### Inicio Zen adaptable
+### Imágenes
 
-- Se conserva el fondo vertical de la v0.1.11.
-- Se añade la imagen horizontal proporcionada por el usuario en `drawable-land-nodpi`.
-- Android selecciona automáticamente el fondo correcto según la orientación.
-- Ninguna imagen nueva fue generada; ambos fondos proceden de los archivos aportados al proyecto y solo fueron convertidos a WebP.
+- Abrir imagen en pestaña nueva.
+- Vista previa.
+- Descargar imagen.
+- Copiar dirección.
+- Compartir imagen.
+- Copiar imagen.
 
-### Tecla Z
+### Imágenes enlazadas y enlaces
 
-- Nuevo sonido mecánico más definido y audible.
-- La reproducción manual al tocar la tecla tiene prioridad sobre la animación de despertar.
-- Continúa respetando el modo silencioso y el ajuste independiente de vibración.
+- Abrir enlace.
+- Abrir enlace en pestaña nueva.
+- Copiar enlace.
 
-## Funciones conservadas
+### Video y audio
 
-- Favoritos.
-- Historial con búsqueda y papelera.
-- Perfiles locales.
-- Espacios Personal, Trabajo y Estudio.
-- DuckDuckGo, Perplexity, Brave Search y Google.
-- Fullscreen web.
-- Barra de dirección durante la navegación.
-- Restauración de sesión.
-- Tema AMOLED.
-- Configuración ampliada.
+- Abrir multimedia.
+- Descargar multimedia.
+- Copiar dirección.
+- Compartir dirección.
+
+El menú usa un panel inferior en vertical y un panel compacto cercano al punto pulsado en horizontal. La descarga reutiliza el administrador existente y conserva `Referer` y datos de sesión mediante GeckoWebExecutor.
+
+## Zen Edge Downloads
+
+- Notificación AMOLED con icono independiente.
+- Nombre del archivo.
+- Velocidad suavizada.
+- Tamaño descargado y tamaño total.
+- Porcentaje.
+- Progreso animado en el borde inferior.
+- Estados:
+  - en espera;
+  - descargando;
+  - completada;
+  - cancelada;
+  - error.
+- Acciones **VER**, **CANCELAR** y **REINTENTAR**.
+- Panel de descargas actualizado cada 400 ms.
+- Reutilización de tarjetas para evitar reconstruir la lista completa.
+- Pulsación larga para quitar un registro.
+
+## Archivos y seguridad
+
+- `FileProvider` para compartir archivos temporales sin exponer rutas internas.
+- Caché de favicons limitada a 10 MB.
+- Caché contextual limitada a 80 MB.
+- Límite de tamaño para imágenes y multimedia temporales.
+- README y CHANGELOG actualizados automáticamente.
 
 ## Versión
 
 ```text
-versionCode 13
-versionName 0.1.12
+versionCode 14
+versionName 0.1.13
 ```
 
 Artefacto esperado:
 
 ```text
-ZenBrowser-v0.1.12-debug
+ZenBrowser-v0.1.13-debug
 ```
 
 ## Compilación
@@ -111,25 +152,26 @@ ZenBrowser-v0.1.12-debug
 gradle :app:assembleDebug --stacktrace
 ```
 
-APK:
+APK generado:
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Política de actualizaciones
+## Validación recomendada en el dispositivo
 
-Cada actualización modifica README y CHANGELOG, incrementa `versionCode`, conserva el mismo `applicationId` y utiliza la clave estable configurada en GitHub Actions para permitir instalarla sobre la versión anterior.
-
-## Pendiente antes de una versión estable
-
-1. Bloqueador de anuncios y rastreadores configurable.
-2. Aislamiento completo de cookies y almacenamiento por perfil.
-3. Base de datos para historiales extensos.
-4. Caché local de favicons.
-5. Restauración binaria de `GeckoSession.SessionState`.
-6. Pruebas instrumentadas en varios fabricantes y versiones de Android.
+1. Abrir diez páginas consecutivas.
+2. Cambiar rápidamente entre cinco pestañas.
+3. Recargar sin que aparezca la pantalla de Inicio.
+4. Cambiar entre los tres espacios.
+5. Crear, editar, reorganizar y eliminar accesos.
+6. Reiniciar y comprobar que los accesos siguen guardados.
+7. Mantener pulsadas imágenes, enlaces, GIF, video y audio.
+8. Descargar desde el menú contextual.
+9. Mantener abierto el panel Descargas y observar el progreso.
+10. Rotar el dispositivo con menús abiertos.
+11. Verificar el comportamiento del botón Atrás.
 
 ## Licencias
 
-El código original se entrega bajo MPL-2.0. GeckoView conserva su licencia. Las marcas de terceros pertenecen a sus propietarios.
+El código original del proyecto se entrega bajo MPL-2.0. GeckoView y AndroidX conservan sus licencias. Las marcas e iconos de terceros pertenecen a sus propietarios.

@@ -25,6 +25,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.mozilla.geckoview.GeckoWebExecutor;
+import org.mozilla.geckoview.WebRequest;
 import org.mozilla.geckoview.WebResponse;
 
 public final class DownloadStore {
@@ -38,6 +40,7 @@ public final class DownloadStore {
         public String id;
         public String name;
         public String source;
+        public String referer;
         public String mime;
         public String contentUri;
         public String status;
@@ -53,6 +56,7 @@ public final class DownloadStore {
             JSONObject item = new JSONObject();
             try {
                 item.put("id", id).put("name", name).put("source", source)
+                        .put("referer", referer)
                         .put("mime", mime).put("contentUri", contentUri)
                         .put("status", status).put("error", error)
                         .put("bytes", bytes).put("total", total)
@@ -67,6 +71,7 @@ public final class DownloadStore {
             record.id = item.optString("id", UUID.randomUUID().toString());
             record.name = item.optString("name", "archivo");
             record.source = item.optString("source", "");
+            record.referer = item.optString("referer", "");
             record.mime = item.optString("mime", "application/octet-stream");
             record.contentUri = item.optString("contentUri", "");
             record.status = item.optString("status", FAILED);
@@ -94,6 +99,7 @@ public final class DownloadStore {
         Record record = new Record();
         record.id = UUID.randomUUID().toString();
         record.source = response.uri == null ? "" : response.uri;
+        record.referer = "";
         record.mime = header(response.headers, "content-type");
         if (record.mime.isEmpty()) record.mime = guessMime(record.source);
         record.total = parseLong(header(response.headers, "content-length"));
@@ -118,6 +124,88 @@ public final class DownloadStore {
             enqueueSystem(app, record);
         }
         return record;
+    }
+
+
+    public static Record enqueueUrl(
+            Context context,
+            String url,
+            String referer,
+            String nameHint,
+            String mimeHint) {
+        if (url == null || url.trim().isEmpty()) return null;
+        Context app = context.getApplicationContext();
+        Record record = new Record();
+        record.id = UUID.randomUUID().toString();
+        record.source = url.trim();
+        record.referer = referer == null ? "" : referer.trim();
+        record.mime = mimeHint == null || mimeHint.trim().isEmpty()
+                ? guessMime(record.source) : mimeHint.trim();
+        String requestedName = nameHint == null || nameHint.trim().isEmpty()
+                ? nameFromUrl(record.source) : nameHint.trim();
+        record.name = uniqueDisplayName(app, ensureExtension(requestedName, record.mime));
+        record.total = -1L;
+        record.status = QUEUED;
+        record.error = "";
+        record.systemId = -1L;
+        record.createdAt = System.currentTimeMillis();
+        record.updatedAt = record.createdAt;
+        record.bytesPerSecond = 0L;
+        upsert(app, record);
+        startUrlFetch(app, record);
+        return record;
+    }
+
+    private static void startUrlFetch(Context app, Record record) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            enqueueSystem(app, record);
+            return;
+        }
+        try {
+            WebRequest.Builder builder = new WebRequest.Builder(record.source)
+                    .header("Accept", "*/*");
+            if (record.referer != null && !record.referer.isEmpty()) {
+                builder.referrer(record.referer);
+            }
+            GeckoWebExecutor executor =
+                    new GeckoWebExecutor(ZenGeckoApplication.runtime(app));
+            executor.fetch(builder.build(), GeckoWebExecutor.FETCH_FLAGS_NONE)
+                    .accept(response -> {
+                        if (response == null || response.body == null) {
+                            record.status = FAILED;
+                            record.error = "El servidor no devolvió contenido";
+                            record.updatedAt = System.currentTimeMillis();
+                            upsert(app, record);
+                            return;
+                        }
+                        String responseMime = header(response.headers, "content-type");
+                        if (responseMime.contains(";")) {
+                            responseMime = responseMime.substring(
+                                    0, responseMime.indexOf(';')).trim();
+                        }
+                        if (!responseMime.isEmpty()) record.mime = responseMime;
+                        long responseTotal = parseLong(
+                                header(response.headers, "content-length"));
+                        if (responseTotal > 0L) record.total = responseTotal;
+                        AtomicBoolean cancelled = new AtomicBoolean(false);
+                        CANCEL_FLAGS.put(record.id, cancelled);
+                        EXECUTOR.execute(() ->
+                                streamToMediaStore(app, record, response.body, cancelled));
+                    }, error -> {
+                        record.status = FAILED;
+                        record.error = error == null || error.getMessage() == null
+                                ? "No se pudo iniciar"
+                                : error.getMessage();
+                        record.updatedAt = System.currentTimeMillis();
+                        upsert(app, record);
+                    });
+        } catch (Throwable error) {
+            record.status = FAILED;
+            record.error = error.getMessage() == null
+                    ? "No se pudo iniciar" : error.getMessage();
+            record.updatedAt = System.currentTimeMillis();
+            upsert(app, record);
+        }
     }
 
     public static List<Record> list(Context context) {
@@ -160,7 +248,7 @@ public final class DownloadStore {
         old.updatedAt = System.currentTimeMillis();
         old.systemId = -1L;
         upsert(app, old);
-        enqueueSystem(app, old);
+        startUrlFetch(app, old);
     }
 
     public static void remove(Context context, String id) {
@@ -204,7 +292,9 @@ public final class DownloadStore {
                     if (now - lastUpdate > 450L) {
                         long elapsed = Math.max(1L, now - record.updatedAt);
                         long delta = Math.max(0L, record.bytes - previousBytes);
-                        record.bytesPerSecond = delta * 1000L / elapsed;
+                        record.bytesPerSecond = smoothRate(
+                                record.bytesPerSecond,
+                                delta * 1000L / elapsed);
                         record.updatedAt = now;
                         previousBytes = record.bytes;
                         upsert(app, record);
@@ -246,6 +336,9 @@ public final class DownloadStore {
             DownloadManager manager = (DownloadManager) app.getSystemService(Context.DOWNLOAD_SERVICE);
             DownloadManager.Request request = new DownloadManager.Request(Uri.parse(record.source));
             request.setTitle(record.name);
+            if (record.referer != null && !record.referer.isEmpty()) {
+                request.addRequestHeader("Referer", record.referer);
+            }
             request.setDescription("Descarga de Zen Browser");
             request.setNotificationVisibility(
                     DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
@@ -286,7 +379,9 @@ public final class DownloadStore {
                         DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
                 long elapsed = Math.max(1L, now - previousAt);
                 long delta = Math.max(0L, record.bytes - previousBytes);
-                record.bytesPerSecond = delta * 1000L / elapsed;
+                record.bytesPerSecond = smoothRate(
+                                record.bytesPerSecond,
+                                delta * 1000L / elapsed);
                 record.updatedAt = now;
                 if (status == DownloadManager.STATUS_SUCCESSFUL) {
                     Uri uri = manager.getUriForDownloadedFile(record.systemId);
@@ -306,6 +401,32 @@ public final class DownloadStore {
             } catch (Exception ignored) { }
         }
         if (changed) synchronized (LOCK) { write(app, records); }
+    }
+
+
+    private static long smoothRate(long previous, long instant) {
+        if (instant <= 0L) return previous;
+        if (previous <= 0L) return instant;
+        return (previous * 3L + instant * 2L) / 5L;
+    }
+
+    private static String nameFromUrl(String url) {
+        try {
+            String segment = Uri.parse(url).getLastPathSegment();
+            if (segment != null && !segment.trim().isEmpty()) {
+                return sanitize(Uri.decode(segment));
+            }
+        } catch (Exception ignored) { }
+        return "descarga-" + System.currentTimeMillis();
+    }
+
+    private static String ensureExtension(String name, String mime) {
+        String clean = sanitize(name);
+        if (clean.contains(".")) return clean;
+        String extension = MimeTypeMap.getSingleton()
+                .getExtensionFromMimeType(mime);
+        return extension == null || extension.isEmpty()
+                ? clean : clean + "." + extension;
     }
 
     private static String deriveName(WebResponse response) {
