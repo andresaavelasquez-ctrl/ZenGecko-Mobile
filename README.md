@@ -181,3 +181,19 @@ El código original del proyecto se entrega bajo MPL-2.0. GeckoView y AndroidX c
 - Restaura `installSafeAreaInsets()` en `MainActivity`.
 - Corrige el error `cannot find symbol` durante `compileDebugJavaWithJavac`.
 - Mantiene los márgenes seguros para recortes de pantalla y modo inmersivo.
+
+## v0.1.14 — Stability & Rendering
+
+- Sustituye los PopupWindow contextuales por diálogos seguros y acotados.
+- Copia los datos de imágenes y enlaces antes de abandonar el callback de GeckoView.
+- Evita actualizar miniaturas o favicons después de destruir una vista.
+- Corrige el cierre al mantener pulsadas imágenes y enlaces.
+- Corrige el cierre al crear o editar accesos rápidos.
+- El editor de accesos se abre después de cerrar el panel lateral.
+- Mantiene una captura de la página anterior hasta el primer contenido pintado.
+- Retrasa la cubierta AMOLED para evitar flashes negros y grises.
+- Conserva activa brevemente la sesión anterior durante un cambio.
+- Reduce la notificación de descarga a una tarjeta de 318 dp por 66 dp.
+- La barra de descarga queda contenida dentro de la tarjeta.
+- Añade registros defensivos para menús, vistas previas y cambios de sesión.
+- Artefacto esperado: `ZenBrowser-v0.1.14-debug`.

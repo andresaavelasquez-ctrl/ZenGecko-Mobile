@@ -132,8 +132,82 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private View addressGlow;
     private ObjectAnimator addressGlowAnimator;
     private ImageView transitionSnapshot;
-    private PopupWindow contextMenuPopup;
-    private PopupWindow contextPreviewPopup;
+    private AlertDialog contextMenuDialog;
+    private AlertDialog contextPreviewDialog;
+    private int contextGeneration;
+    private boolean quickEditorOpening;
+
+
+    private static final class ContextTarget {
+        final int type;
+        final String source;
+        final String link;
+        final String base;
+        final String alt;
+        final String title;
+        final String linkText;
+
+        ContextTarget(
+                int type,
+                String source,
+                String link,
+                String base,
+                String alt,
+                String title,
+                String linkText) {
+            this.type = type;
+            this.source = clean(source);
+            this.link = clean(link);
+            this.base = clean(base);
+            this.alt = clean(alt);
+            this.title = clean(title);
+            this.linkText = clean(linkText);
+        }
+
+        static ContextTarget from(GeckoSession.ContentDelegate.ContextElement element) {
+            if (element == null) return null;
+            return new ContextTarget(
+                    element.type,
+                    element.srcUri,
+                    element.linkUri,
+                    element.baseUri,
+                    element.altText,
+                    element.title,
+                    element.linkText);
+        }
+
+        private static String clean(String value) {
+            return value == null ? "" : value.trim();
+        }
+
+        boolean isImage() {
+            return type == GeckoSession.ContentDelegate.ContextElement.TYPE_IMAGE;
+        }
+
+        boolean isVideo() {
+            return type == GeckoSession.ContentDelegate.ContextElement.TYPE_VIDEO;
+        }
+
+        boolean isAudio() {
+            return type == GeckoSession.ContentDelegate.ContextElement.TYPE_AUDIO;
+        }
+
+        boolean isMedia() {
+            return isImage() || isVideo() || isAudio();
+        }
+    }
+
+    private boolean isActivityUsable() {
+        if (isFinishing()) return false;
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1
+                || !isDestroyed();
+    }
+
+    private boolean isRemoteHttpUrl(String value) {
+        if (value == null) return false;
+        String clean = value.trim().toLowerCase(Locale.ROOT);
+        return clean.startsWith("https://") || clean.startsWith("http://");
+    }
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -232,13 +306,52 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         });
     }
 
+    @Override public void onPageStarted(
+            GeckoSession session,
+            String url,
+            boolean hadValidPaint) {
+        runOnUiThread(() -> {
+            if (!isActivityUsable()) return;
+            BrowserTab active = browser == null ? null : browser.getActiveTab();
+            if (active == null || active.session != session || active.showStartPage) return;
+
+            startAddressGlow();
+            if (hadValidPaint) {
+                captureNavigationSnapshot(session);
+            } else {
+                mainHandler.postDelayed(() -> {
+                    BrowserTab current = browser == null ? null : browser.getActiveTab();
+                    if (current == null
+                            || current.session != session
+                            || current.hasValidPaint
+                            || transitionSnapshot != null
+                            || !current.loading) {
+                        return;
+                    }
+                    showPaintGuard(session, "");
+                }, 220L);
+            }
+        });
+    }
+
     @Override public void onPageFinished(GeckoSession session, boolean success) {
         runOnUiThread(() -> {
             BrowserTab active = browser == null ? null : browser.getActiveTab();
             if (active == null || active.session != session) return;
-            if (!success) hidePaintGuard(session, true);
+            if (!success) {
+                mainHandler.postDelayed(() -> {
+                    BrowserTab current = browser == null ? null : browser.getActiveTab();
+                    if (current == null || current.session != session) return;
+                    if (!current.hasValidPaint) {
+                        hidePaintGuard(session, true);
+                        clearTransitionSnapshot();
+                        tabTransitionRunning = false;
+                    }
+                }, 1200L);
+            }
         });
     }
+
 
     @Override public void onPaintStatusReset(GeckoSession session) {
         runOnUiThread(() -> {
@@ -246,29 +359,45 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             if (active == null || active.session != session) return;
             lastPaintCoverKey = "";
             if (!activityResumed || active.showStartPage) return;
-            showPaintGuard(session, "Preparando la página…");
+
+            if (transitionSnapshot == null) {
+                mainHandler.postDelayed(() -> {
+                    BrowserTab current = browser == null ? null : browser.getActiveTab();
+                    if (current == null
+                            || current.session != session
+                            || current.hasValidPaint
+                            || transitionSnapshot != null) {
+                        return;
+                    }
+                    showPaintGuard(session, "");
+                }, 180L);
+            }
         });
     }
+
 
     @Override public void onFirstComposite(GeckoSession session) {
         runOnUiThread(() -> {
             BrowserTab active = browser == null ? null : browser.getActiveTab();
             if (active == null || active.session != session) return;
             if (transitionSnapshot != null) {
-                mainHandler.postDelayed(
-                        () -> fadeTransitionSnapshot(transitionGeneration), 25L);
+                transitionSnapshot.setAlpha(1f);
             }
         });
     }
+
 
     @Override public void onFirstContentfulPaint(GeckoSession session) {
         runOnUiThread(() -> {
             hidePaintGuard(session, false);
             if (transitionSnapshot != null) {
                 fadeTransitionSnapshot(transitionGeneration);
+            } else {
+                tabTransitionRunning = false;
             }
         });
     }
+
 
     @Override public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
@@ -292,12 +421,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void handleBackNavigation() {
-        if (contextPreviewPopup != null && contextPreviewPopup.isShowing()) {
-            contextPreviewPopup.dismiss();
+        if (contextPreviewDialog != null && contextPreviewDialog.isShowing()) {
+            contextPreviewDialog.dismiss();
             return;
         }
-        if (contextMenuPopup != null && contextMenuPopup.isShowing()) {
-            contextMenuPopup.dismiss();
+        if (contextMenuDialog != null && contextMenuDialog.isShowing()) {
+            contextMenuDialog.dismiss();
             return;
         }
         if (contentFullScreen) {
@@ -333,6 +462,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         }
         confirmExitApplication();
     }
+
 
     private void registerModernBackCallback() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
@@ -370,17 +500,39 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     private void attachSession(GeckoSession session) {
         if (session == null || geckoView == null || displayedSession == session) return;
-        detachGeckoView();
+
         try {
+            session.setActive(true);
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Unable to activate target GeckoSession", error);
+        }
+
+        GeckoSession previous = displayedSession;
+        try {
+            if (previous != null) {
+                GeckoSession released = geckoView.releaseSession();
+                if (released != null) {
+                    Log.d(TAG, "Released previous GeckoSession from GeckoView");
+                }
+            }
             geckoView.setSession(session);
             displayedSession = session;
+            geckoView.requestLayout();
             Log.d(TAG, "Attached GeckoSession to GeckoView");
         } catch (RuntimeException error) {
             displayedSession = null;
             Log.e(TAG, "Unable to attach GeckoSession", error);
-            throw error;
+            if (previous != null && previous != session) {
+                try {
+                    geckoView.setSession(previous);
+                    displayedSession = previous;
+                } catch (RuntimeException restoreError) {
+                    Log.e(TAG, "Unable to restore previous GeckoSession", restoreError);
+                }
+            }
         }
     }
+
 
     private void setCurrentSessionActive(boolean active) {
         if (browser != null) browser.setAppForeground(active);
@@ -691,9 +843,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void showPaintGuard(GeckoSession session, String ignoredMessage) {
-        if (paintGuard == null || browser == null) return;
+        if (paintGuard == null || browser == null || transitionSnapshot != null) return;
         BrowserTab active = browser.getActiveTab();
-        if (active == null || active.session != session || active.showStartPage) return;
+        if (active == null || active.session != session || active.showStartPage
+                || active.hasValidPaint) {
+            return;
+        }
 
         paintGuard.animate().cancel();
         paintGuard.setAlpha(1f);
@@ -709,7 +864,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         paintGuardTimeout = () -> {
             BrowserTab current = browser == null ? null : browser.getActiveTab();
             if (current == null || current.session != session || paintGuard == null
-                    || paintGuard.getVisibility() != View.VISIBLE) {
+                    || paintGuard.getVisibility() != View.VISIBLE
+                    || current.hasValidPaint) {
                 return;
             }
             String host = displayHost(current.url);
@@ -729,8 +885,9 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                         .start();
             }
         };
-        mainHandler.postDelayed(paintGuardTimeout, 6200L);
+        mainHandler.postDelayed(paintGuardTimeout, 6500L);
     }
+
 
     private void hidePaintGuard(GeckoSession session, boolean immediate) {
         if (paintGuard == null || browser == null) return;
@@ -1387,7 +1544,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         TextView label = text("Añadir", 8, R.color.zen_muted);
         label.setGravity(Gravity.CENTER);
         card.addView(label);
-        card.setOnClickListener(v -> showQuickAccessEditor(null));
+        card.setOnClickListener(v -> openQuickAccessEditor(null));
         return card;
     }
 
@@ -1477,7 +1634,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         });
 
         card.setOnLongClickListener(v -> {
-            showQuickAccessEditor(item);
+            openQuickAccessEditor(item);
             return true;
         });
 
@@ -1510,10 +1667,24 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         return card;
     }
 
+    private void openQuickAccessEditor(QuickAccessStore.Item existing) {
+        if (quickEditorOpening || !isActivityUsable()) return;
+        final QuickAccessStore.Item snapshot =
+                existing == null ? null : existing.copy();
+        quickEditorOpening = true;
+        dismissSidebarPopupImmediate();
+        mainHandler.postDelayed(() -> {
+            quickEditorOpening = false;
+            if (!isActivityUsable()) return;
+            showQuickAccessEditor(snapshot);
+        }, 110L);
+    }
+
     private void showQuickAccessEditor(QuickAccessStore.Item existing) {
+        if (!isActivityUsable()) return;
         String workspaceId = browser.getActiveWorkspaceId();
         QuickAccessStore.Item draft = existing == null
-                ? QuickAccessStore.create(workspaceId, "", "https://", "")
+                ? QuickAccessStore.create(workspaceId, "", "", "")
                 : existing.copy();
 
         LinearLayout form = new LinearLayout(this);
@@ -1526,7 +1697,9 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         ImageView preview = new ImageView(this);
         preview.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         preview.setBackgroundResource(R.drawable.bg_favicon);
-        previewRow.addView(preview, new LinearLayout.LayoutParams(dp(52), dp(52)));
+        preview.setImageResource(R.drawable.ic_open_new);
+        preview.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_muted)));
+        previewRow.addView(preview, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         TextView previewText = text(
                 existing == null ? "Nuevo acceso" : existing.name,
@@ -1534,12 +1707,14 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 R.color.zen_text);
         previewText.setTypeface(Typeface.DEFAULT_BOLD);
         LinearLayout.LayoutParams previewTextParams =
-                new LinearLayout.LayoutParams(0, dp(52), 1f);
+                new LinearLayout.LayoutParams(0, dp(48), 1f);
         previewTextParams.setMargins(dp(12), 0, 0, 0);
         previewRow.addView(previewText, previewTextParams);
         form.addView(previewRow);
 
-        EditText name = quickAccessInput("Nombre", existing == null ? "" : existing.name);
+        EditText name = quickAccessInput(
+                "Nombre",
+                existing == null ? "" : existing.name);
         EditText url = quickAccessInput(
                 "https://sitio.com",
                 existing == null ? "" : existing.url);
@@ -1550,12 +1725,20 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         form.addView(url, quickEditorParams());
         form.addView(iconUrl, quickEditorParams());
 
-        TextView detect = text("DETECTAR ICONO AUTOMÁTICAMENTE", 10, R.color.zen_accent);
+        TextView detect = text(
+                "DETECTAR ICONO AUTOMÁTICAMENTE",
+                10,
+                R.color.zen_accent);
         detect.setTypeface(Typeface.DEFAULT_BOLD);
         detect.setGravity(Gravity.CENTER);
         detect.setBackgroundResource(R.drawable.bg_context_action);
         detect.setOnClickListener(v -> {
-            String detected = QuickAccessStore.automaticIconUrl(url.getText().toString());
+            String cleanUrl = url.getText().toString().trim();
+            if (cleanUrl.isEmpty()) {
+                url.setError("Escribe primero una dirección");
+                return;
+            }
+            String detected = QuickAccessStore.automaticIconUrl(cleanUrl);
             iconUrl.setText(detected);
             loadQuickAccessPreview(preview, detected);
         });
@@ -1564,65 +1747,114 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         detectParams.setMargins(0, dp(4), 0, 0);
         form.addView(detect, detectParams);
 
-        String initialIcon = existing == null || existing.iconUrl == null
-                || existing.iconUrl.trim().isEmpty()
-                ? QuickAccessStore.automaticIconUrl(existing == null ? "" : existing.url)
-                : existing.iconUrl;
-        loadQuickAccessPreview(preview, initialIcon);
-
-        AlertDialog dialog = new AlertDialog.Builder(this)
+        AlertDialog.Builder builder = new AlertDialog.Builder(this)
                 .setTitle(existing == null ? "Añadir acceso" : "Editar acceso")
                 .setView(form)
                 .setNegativeButton("Cancelar", null)
-                .setNeutralButton(existing == null ? "" : "Eliminar", null)
-                .setPositiveButton("Guardar", null)
-                .create();
+                .setPositiveButton("Guardar", null);
+        if (existing != null) {
+            builder.setNeutralButton("Eliminar", null);
+        }
 
+        AlertDialog dialog = builder.create();
+        dialog.setOnDismissListener(ignored -> RemoteAssetLoader.cancel(preview));
         dialog.setOnShowListener(ignored -> {
+            if (!isActivityUsable()) {
+                dialog.dismiss();
+                return;
+            }
+
             TextView save = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (save == null) return;
             save.setTextColor(getColor(R.color.zen_accent));
             save.setOnClickListener(v -> {
                 String cleanName = name.getText().toString().trim();
                 String cleanUrl = url.getText().toString().trim();
-                if (cleanUrl.isEmpty() || "https://".equals(cleanUrl)) {
+                if (cleanUrl.isEmpty()) {
                     url.setError("Escribe una dirección");
                     return;
                 }
-                draft.workspaceId = workspaceId;
-                draft.name = cleanName;
-                draft.url = QuickAccessStore.normalizeUrl(cleanUrl);
-                draft.iconUrl = iconUrl.getText().toString().trim();
-                if (draft.iconUrl.isEmpty()) {
-                    draft.iconUrl = QuickAccessStore.automaticIconUrl(draft.url);
-                }
-                if (!QuickAccessStore.save(this, draft)) {
+
+                v.setEnabled(false);
+                try {
+                    draft.workspaceId = workspaceId;
+                    draft.name = cleanName;
+                    draft.url = QuickAccessStore.normalizeUrl(cleanUrl);
+                    draft.iconUrl = iconUrl.getText().toString().trim();
+                    if (draft.iconUrl.isEmpty()) {
+                        draft.iconUrl = QuickAccessStore.automaticIconUrl(draft.url);
+                    }
+
+                    if (!QuickAccessStore.save(getApplicationContext(), draft)) {
+                        Toast.makeText(
+                                MainActivity.this,
+                                "El espacio ya tiene el máximo de accesos",
+                                Toast.LENGTH_SHORT).show();
+                        v.setEnabled(true);
+                        return;
+                    }
+
+                    dialog.dismiss();
+                    mainHandler.postDelayed(() -> {
+                        if (isActivityUsable()) showSidebarPopup();
+                    }, 120L);
+                } catch (Throwable error) {
+                    Log.e(TAG, "Unable to save quick access", error);
                     Toast.makeText(
-                            this,
-                            "El espacio ya tiene el máximo de accesos",
+                            MainActivity.this,
+                            "No se pudo guardar el acceso",
                             Toast.LENGTH_SHORT).show();
-                    return;
+                    v.setEnabled(true);
                 }
-                dialog.dismiss();
-                refreshSidebarPopup();
             });
 
             if (existing != null) {
                 TextView remove = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
-                remove.setTextColor(getColor(R.color.zen_danger));
-                remove.setOnClickListener(v -> new AlertDialog.Builder(this)
-                        .setTitle("Eliminar acceso")
-                        .setMessage("¿Quitar " + existing.name + "?")
-                        .setNegativeButton("Cancelar", null)
-                        .setPositiveButton("Eliminar", (confirm, which) -> {
-                            QuickAccessStore.remove(this, workspaceId, existing.id);
-                            dialog.dismiss();
-                            refreshSidebarPopup();
-                        })
-                        .show());
+                if (remove != null) {
+                    remove.setTextColor(getColor(R.color.zen_danger));
+                    remove.setOnClickListener(v -> new AlertDialog.Builder(this)
+                            .setTitle("Eliminar acceso")
+                            .setMessage("¿Quitar " + existing.name + "?")
+                            .setNegativeButton("Cancelar", null)
+                            .setPositiveButton("Eliminar", (confirm, which) -> {
+                                try {
+                                    QuickAccessStore.remove(
+                                            getApplicationContext(),
+                                            workspaceId,
+                                            existing.id);
+                                    dialog.dismiss();
+                                    mainHandler.postDelayed(() -> {
+                                        if (isActivityUsable()) showSidebarPopup();
+                                    }, 120L);
+                                } catch (Throwable error) {
+                                    Log.e(TAG, "Unable to remove quick access", error);
+                                }
+                            })
+                            .show());
+                }
+            }
+
+            if (existing != null
+                    && existing.iconUrl != null
+                    && !existing.iconUrl.trim().isEmpty()) {
+                mainHandler.postDelayed(
+                        () -> loadQuickAccessPreview(preview, existing.iconUrl),
+                        80L);
             }
         });
-        dialog.show();
+
+        try {
+            dialog.show();
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Unable to show quick access editor", error);
+            try { dialog.dismiss(); } catch (RuntimeException ignored) { }
+            Toast.makeText(
+                    this,
+                    "No se pudo abrir el editor de accesos",
+                    Toast.LENGTH_SHORT).show();
+        }
     }
+
 
     private EditText quickAccessInput(String hint, String value) {
         EditText input = new EditText(this);
@@ -1645,23 +1877,49 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void loadQuickAccessPreview(ImageView preview, String iconUrl) {
+        if (preview == null) return;
+        RemoteAssetLoader.cancel(preview);
         preview.setImageDrawable(null);
         if (iconUrl == null || iconUrl.trim().isEmpty()) {
             preview.setImageResource(R.drawable.ic_open_new);
             preview.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_muted)));
             return;
         }
-        preview.setImageTintList(null);
-        RemoteAssetLoader.loadInto(this, iconUrl, 96, preview,
-                new RemoteAssetLoader.Callback() {
-                    @Override public void onLoaded(Bitmap bitmap) { }
-                    @Override public void onError(Throwable error) {
-                        preview.setImageResource(R.drawable.ic_open_new);
-                        preview.setImageTintList(
-                                ColorStateList.valueOf(getColor(R.color.zen_muted)));
-                    }
-                });
+
+        preview.setImageResource(R.drawable.ic_open_new);
+        preview.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_muted)));
+        mainHandler.post(() -> {
+            if (!isActivityUsable() || !preview.isAttachedToWindow()) return;
+            try {
+                preview.setImageTintList(null);
+                RemoteAssetLoader.loadInto(
+                        MainActivity.this,
+                        iconUrl,
+                        96,
+                        preview,
+                        new RemoteAssetLoader.Callback() {
+                            @Override public void onLoaded(Bitmap bitmap) { }
+
+                            @Override public void onError(Throwable error) {
+                                if (!isActivityUsable() || !preview.isAttachedToWindow()) {
+                                    return;
+                                }
+                                preview.setImageResource(R.drawable.ic_open_new);
+                                preview.setImageTintList(ColorStateList.valueOf(
+                                        getColor(R.color.zen_muted)));
+                            }
+                        });
+            } catch (Throwable error) {
+                Log.w(TAG, "Quick access preview unavailable", error);
+                if (preview.isAttachedToWindow()) {
+                    preview.setImageResource(R.drawable.ic_open_new);
+                    preview.setImageTintList(ColorStateList.valueOf(
+                            getColor(R.color.zen_muted)));
+                }
+            }
+        });
     }
+
 
     private int quickAccessIconResource(String url) {
         String host = QuickAccessStore.host(url);
@@ -2326,7 +2584,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         String input = value == null ? "" : value.trim();
         dismissSearchPopup();
         if (input.isEmpty()) return;
-        browser.loadInActiveTab(input);
+        beginNavigationTransition(() -> browser.loadInActiveTab(input));
     }
 
     private void dismissSearchPopup() {
@@ -2399,8 +2657,13 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private void animateWebTransition(Runnable change) {
         if (change == null) return;
         dismissContextMenuImmediate();
-        if (geckoView == null || webHost == null || tabTransitionRunning
+        if (geckoView == null || webHost == null
                 || !ZenPanelController.animationsEnabled(this)) {
+            change.run();
+            return;
+        }
+
+        if (tabTransitionRunning) {
             change.run();
             return;
         }
@@ -2411,8 +2674,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             if (generation == transitionGeneration && tabTransitionRunning) {
                 clearTransitionSnapshot();
                 tabTransitionRunning = false;
+                BrowserTab active = browser == null ? null : browser.getActiveTab();
+                if (active != null && !active.hasValidPaint && active.session != null) {
+                    showPaintGuard(active.session, "");
+                }
             }
-        }, 1200L);
+        }, 3600L);
 
         try {
             geckoView.capturePixels()
@@ -2427,6 +2694,63 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     }, error -> runFallbackTransition(change, generation));
         } catch (RuntimeException error) {
             runFallbackTransition(change, generation);
+        }
+    }
+
+
+    private void beginNavigationTransition(Runnable navigation) {
+        if (navigation == null) return;
+        BrowserTab active = browser == null ? null : browser.getActiveTab();
+        if (active == null || active.session == null || !active.hasValidPaint) {
+            navigation.run();
+            return;
+        }
+        captureNavigationSnapshot(active.session);
+        navigation.run();
+    }
+
+    private void captureNavigationSnapshot(GeckoSession session) {
+        if (session == null
+                || geckoView == null
+                || webHost == null
+                || displayedSession != session
+                || transitionSnapshot != null
+                || tabTransitionRunning) {
+            return;
+        }
+
+        tabTransitionRunning = true;
+        final int generation = ++transitionGeneration;
+        mainHandler.postDelayed(() -> {
+            if (generation == transitionGeneration && tabTransitionRunning) {
+                clearTransitionSnapshot();
+                tabTransitionRunning = false;
+                BrowserTab active = browser == null ? null : browser.getActiveTab();
+                if (active != null && !active.hasValidPaint && active.session != null) {
+                    showPaintGuard(active.session, "");
+                }
+            }
+        }, 3600L);
+
+        try {
+            geckoView.capturePixels()
+                    .withHandler(mainHandler)
+                    .accept(bitmap -> {
+                        if (generation != transitionGeneration) return;
+                        BrowserTab active = browser == null ? null : browser.getActiveTab();
+                        if (active == null || active.session != session || active.hasValidPaint) {
+                            tabTransitionRunning = false;
+                            return;
+                        }
+                        showTransitionSnapshot(bitmap);
+                    }, error -> {
+                        if (generation == transitionGeneration) {
+                            tabTransitionRunning = false;
+                        }
+                    });
+        } catch (RuntimeException error) {
+            tabTransitionRunning = false;
+            Log.w(TAG, "Unable to capture navigation snapshot", error);
         }
     }
 
@@ -2782,12 +3106,32 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             int screenX,
             int screenY,
             GeckoSession.ContentDelegate.ContextElement element) {
+        final ContextTarget target;
+        try {
+            target = ContextTarget.from(element);
+        } catch (Throwable error) {
+            Log.e(TAG, "Unable to snapshot context element", error);
+            return;
+        }
+        if (target == null) return;
+
         runOnUiThread(() -> {
+            if (!isActivityUsable()) return;
             BrowserTab active = browser == null ? null : browser.getActiveTab();
-            if (active == null || active.session != session || element == null) return;
-            showWebContextMenu(screenX, screenY, element);
+            if (active == null || active.session != session) return;
+            try {
+                showWebContextMenu(screenX, screenY, target);
+            } catch (Throwable error) {
+                Log.e(TAG, "Unable to show web context menu", error);
+                dismissContextMenuImmediate();
+                Toast.makeText(
+                        MainActivity.this,
+                        "No se pudo abrir el menú del elemento",
+                        Toast.LENGTH_SHORT).show();
+            }
         });
     }
+
 
     @Override public void onPageIcon(GeckoSession session, String iconUrl) {
         runOnUiThread(() -> {
@@ -2806,25 +3150,25 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private void showWebContextMenu(
             int screenX,
             int screenY,
-            GeckoSession.ContentDelegate.ContextElement element) {
+            ContextTarget target) {
         dismissContextMenuImmediate();
-        String source = safe(element.srcUri);
-        String link = safe(element.linkUri);
-        String base = safe(element.baseUri);
-        boolean image = element.type
-                == GeckoSession.ContentDelegate.ContextElement.TYPE_IMAGE;
-        boolean video = element.type
-                == GeckoSession.ContentDelegate.ContextElement.TYPE_VIDEO;
-        boolean audio = element.type
-                == GeckoSession.ContentDelegate.ContextElement.TYPE_AUDIO;
-        boolean media = image || video || audio;
+        if (!isActivityUsable() || target == null) return;
+
+        final int generation = ++contextGeneration;
+        final boolean image = target.isImage();
+        final boolean video = target.isVideo();
+        final boolean audio = target.isAudio();
+        final boolean media = target.isMedia();
+        final String source = target.source;
+        final String link = target.link;
+        final String base = target.base;
+
         if (!media && link.isEmpty()) return;
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(10), dp(10), dp(10), dp(11));
+        panel.setPadding(dp(10), dp(10), dp(10), dp(8));
         panel.setBackgroundResource(R.drawable.bg_context_sheet);
-        panel.setElevation(dp(24));
 
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -2833,24 +3177,25 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         ImageView preview = new ImageView(this);
         preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
         preview.setBackgroundResource(R.drawable.bg_context_preview);
-        if (image && !source.isEmpty()) {
-            RemoteAssetLoader.loadInto(this, source, 160, preview, null);
-        } else {
-            preview.setImageResource(video ? R.drawable.ic_preview
-                    : audio ? R.drawable.ic_downloads : R.drawable.ic_open_new);
-            preview.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_accent)));
-        }
-        header.addView(preview, new LinearLayout.LayoutParams(dp(58), dp(58)));
+        preview.setImageResource(image
+                ? R.drawable.ic_preview
+                : video
+                ? R.drawable.ic_preview
+                : audio
+                ? R.drawable.ic_downloads
+                : R.drawable.ic_open_new);
+        preview.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_accent)));
+        header.addView(preview, new LinearLayout.LayoutParams(dp(50), dp(50)));
 
         LinearLayout labels = new LinearLayout(this);
         labels.setOrientation(LinearLayout.VERTICAL);
         labels.setGravity(Gravity.CENTER_VERTICAL);
         String heading = firstNonEmpty(
-                element.altText,
-                element.title,
-                element.linkText,
+                target.alt,
+                target.title,
+                target.linkText,
                 image ? "Imagen" : video ? "Video" : audio ? "Audio" : "Enlace");
-        TextView title = text(heading, 14, R.color.zen_text);
+        TextView title = text(heading, 13, R.color.zen_text);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.END);
@@ -2862,8 +3207,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         labels.addView(title);
         labels.addView(domain);
         LinearLayout.LayoutParams labelParams =
-                new LinearLayout.LayoutParams(0, dp(58), 1f);
-        labelParams.setMargins(dp(11), 0, 0, 0);
+                new LinearLayout.LayoutParams(0, dp(50), 1f);
+        labelParams.setMargins(dp(10), 0, 0, 0);
         header.addView(labels, labelParams);
         panel.addView(header);
 
@@ -2873,7 +3218,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     "Abrir imagen en pestaña nueva",
                     () -> {
                         dismissContextMenuImmediate();
-                        browser.addTab(source, true);
+                        animateWebTransition(() -> browser.addTab(source, true));
                     }));
             panel.addView(contextAction(
                     R.drawable.ic_preview,
@@ -2902,7 +3247,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     video ? "Abrir video" : "Abrir audio",
                     () -> {
                         dismissContextMenuImmediate();
-                        browser.addTab(source, true);
+                        animateWebTransition(() -> browser.addTab(source, true));
                     }));
             panel.addView(contextAction(
                     R.drawable.ic_downloads,
@@ -2925,14 +3270,14 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     "Abrir enlace",
                     () -> {
                         dismissContextMenuImmediate();
-                        browser.loadInActiveTab(link);
+                        beginNavigationTransition(() -> browser.loadInActiveTab(link));
                     }));
             panel.addView(contextAction(
                     R.drawable.ic_open_new,
                     "Abrir enlace en pestaña nueva",
                     () -> {
                         dismissContextMenuImmediate();
-                        browser.addTab(link, true);
+                        animateWebTransition(() -> browser.addTab(link, true));
                     }));
             panel.addView(contextAction(
                     R.drawable.ic_copy,
@@ -2940,114 +3285,235 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     () -> copyText("Enlace", link)));
         }
 
-        int screenWidth = getResources().getDisplayMetrics().widthPixels;
-        int screenHeight = getResources().getDisplayMetrics().heightPixels;
-        boolean landscape = screenWidth > screenHeight;
-        int width = landscape
-                ? Math.min(dp(380), screenWidth - dp(24))
-                : Math.min(dp(470), screenWidth - dp(20));
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.addView(panel, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        contextMenuPopup = new PopupWindow(
-                panel,
-                width,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                true);
-        contextMenuPopup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-        contextMenuPopup.setOutsideTouchable(true);
-        contextMenuPopup.setClippingEnabled(true);
-        contextMenuPopup.setElevation(dp(25));
-        contextMenuPopup.setOnDismissListener(() -> contextMenuPopup = null);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setView(scroll)
+                .create();
+        contextMenuDialog = dialog;
+        dialog.setCanceledOnTouchOutside(true);
+        dialog.setOnDismissListener(ignored -> {
+            if (generation == contextGeneration) {
+                contextMenuDialog = null;
+            }
+            RemoteAssetLoader.cancel(preview);
+        });
 
-        if (landscape) {
-            int x = Math.max(dp(8), Math.min(screenX - width / 2, screenWidth - width - dp(8)));
-            int estimatedHeight = Math.min(dp(540), screenHeight - dp(20));
-            int y = Math.max(dp(8), Math.min(screenY - dp(80), screenHeight - estimatedHeight));
-            contextMenuPopup.showAtLocation(appRoot, Gravity.TOP | Gravity.START, x, y);
+        try {
+            dialog.show();
+            Window window = dialog.getWindow();
+            if (window == null) {
+                dialog.dismiss();
+                return;
+            }
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams attributes = window.getAttributes();
+            attributes.dimAmount = .18f;
+
+            int screenWidth = getResources().getDisplayMetrics().widthPixels;
+            int screenHeight = getResources().getDisplayMetrics().heightPixels;
+            boolean landscape = screenWidth > screenHeight;
+            int width = Math.min(dp(360), screenWidth - dp(24));
+
+            panel.measure(
+                    View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            int height = Math.min(
+                    panel.getMeasuredHeight() + dp(8),
+                    screenHeight - safeInsetTop - safeInsetBottom - dp(36));
+
+            attributes.gravity = landscape
+                    ? Gravity.CENTER
+                    : Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+            attributes.y = landscape ? 0 : safeInsetBottom + dp(10);
+            window.setAttributes(attributes);
+            window.setLayout(width, Math.max(dp(150), height));
+
             panel.setAlpha(0f);
-            panel.setScaleX(.97f);
-            panel.setScaleY(.97f);
-            panel.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(150L).start();
-        } else {
-            contextMenuPopup.showAtLocation(
-                    appRoot,
-                    Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL,
-                    0,
-                    safeInsetBottom + dp(8));
-            panel.setTranslationY(dp(24));
-            panel.setAlpha(0f);
+            panel.setTranslationY(landscape ? 0f : dp(16));
             panel.animate()
-                    .translationY(0f)
                     .alpha(1f)
-                    .setDuration(185L)
+                    .translationY(0f)
+                    .setDuration(150L)
                     .setInterpolator(new android.view.animation.DecelerateInterpolator())
                     .start();
+
+            if (image && isRemoteHttpUrl(source)) {
+                mainHandler.postDelayed(() -> {
+                    if (!isActivityUsable()
+                            || generation != contextGeneration
+                            || contextMenuDialog != dialog
+                            || !dialog.isShowing()
+                            || !preview.isAttachedToWindow()) {
+                        return;
+                    }
+                    preview.setImageTintList(null);
+                    try {
+                        RemoteAssetLoader.loadInto(
+                                MainActivity.this,
+                                source,
+                                96,
+                                preview,
+                                new RemoteAssetLoader.Callback() {
+                                    @Override public void onLoaded(Bitmap bitmap) { }
+
+                                    @Override public void onError(Throwable error) {
+                                        if (!preview.isAttachedToWindow()) return;
+                                        preview.setImageResource(R.drawable.ic_preview);
+                                        preview.setImageTintList(ColorStateList.valueOf(
+                                                getColor(R.color.zen_accent)));
+                                    }
+                                });
+                    } catch (Throwable error) {
+                        Log.w(TAG, "Context thumbnail unavailable", error);
+                    }
+                }, 120L);
+            }
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Context dialog show failed", error);
+            contextMenuDialog = null;
+            try { dialog.dismiss(); } catch (RuntimeException ignored) { }
+            Toast.makeText(
+                    this,
+                    "No se pudo abrir el menú del elemento",
+                    Toast.LENGTH_SHORT).show();
         }
     }
+
 
     private View contextAction(int iconRes, String label, Runnable action) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(11), 0, dp(9), 0);
+        row.setPadding(dp(10), 0, dp(8), 0);
         row.setBackgroundResource(R.drawable.bg_context_action);
 
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconRes);
         icon.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_text)));
-        row.addView(icon, new LinearLayout.LayoutParams(dp(22), dp(22)));
+        row.addView(icon, new LinearLayout.LayoutParams(dp(20), dp(20)));
 
-        TextView text = text(label, 13, R.color.zen_text);
+        TextView text = text(label, 12, R.color.zen_text);
         text.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams textParams =
-                new LinearLayout.LayoutParams(0, dp(44), 1f);
-        textParams.setMargins(dp(11), 0, 0, 0);
+                new LinearLayout.LayoutParams(0, dp(40), 1f);
+        textParams.setMargins(dp(10), 0, 0, 0);
         row.addView(text, textParams);
-        row.setOnClickListener(v -> action.run());
+
+        row.setOnClickListener(v -> {
+            if (!v.isEnabled()) return;
+            v.setEnabled(false);
+            try {
+                action.run();
+            } catch (Throwable error) {
+                Log.e(TAG, "Context action failed: " + label, error);
+                Toast.makeText(
+                        MainActivity.this,
+                        "No se pudo completar la acción",
+                        Toast.LENGTH_SHORT).show();
+                dismissContextMenuImmediate();
+            } finally {
+                if (v.isAttachedToWindow()) v.setEnabled(true);
+            }
+        });
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
-        params.setMargins(0, 0, 0, dp(4));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42));
+        params.setMargins(0, 0, 0, dp(3));
         row.setLayoutParams(params);
         return row;
     }
 
+
     private void showMediaPreview(String url, String title) {
         dismissContextMenuImmediate();
+        if (!isActivityUsable() || !isRemoteHttpUrl(url)) return;
+
+        final int generation = ++contextGeneration;
         FrameLayout container = new FrameLayout(this);
         container.setBackgroundColor(0xF5000000);
-        container.setOnClickListener(v -> {
-            if (contextPreviewPopup != null) contextPreviewPopup.dismiss();
-        });
 
         ImageView image = new ImageView(this);
         image.setScaleType(ImageView.ScaleType.FIT_CENTER);
         image.setContentDescription(title);
+        image.setImageResource(R.drawable.ic_preview);
+        image.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_accent)));
         container.addView(image, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
-        RemoteAssetLoader.loadInto(this, url, 1600, image,
-                new RemoteAssetLoader.Callback() {
-                    @Override public void onLoaded(Bitmap bitmap) { }
-                    @Override public void onError(Throwable error) {
-                        Toast.makeText(
-                                MainActivity.this,
-                                "No se pudo cargar la vista previa",
-                                Toast.LENGTH_SHORT).show();
-                        if (contextPreviewPopup != null) contextPreviewPopup.dismiss();
-                    }
-                });
 
-        contextPreviewPopup = new PopupWindow(
-                container,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                true);
-        contextPreviewPopup.setBackgroundDrawable(new ColorDrawable(Color.BLACK));
-        contextPreviewPopup.setClippingEnabled(false);
-        contextPreviewPopup.setOnDismissListener(() -> contextPreviewPopup = null);
-        contextPreviewPopup.showAtLocation(appRoot, Gravity.CENTER, 0, 0);
-        image.setAlpha(0f);
-        image.animate().alpha(1f).setDuration(180L).start();
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setView(container)
+                .create();
+        contextPreviewDialog = dialog;
+        dialog.setOnDismissListener(ignored -> {
+            if (generation == contextGeneration) contextPreviewDialog = null;
+            RemoteAssetLoader.cancel(image);
+        });
+        container.setOnClickListener(v -> {
+            if (dialog.isShowing()) dialog.dismiss();
+        });
+
+        try {
+            dialog.show();
+            Window window = dialog.getWindow();
+            if (window == null) {
+                dialog.dismiss();
+                return;
+            }
+            window.setBackgroundDrawable(new ColorDrawable(Color.BLACK));
+            window.setDimAmount(0f);
+            window.setLayout(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+
+            mainHandler.postDelayed(() -> {
+                if (!isActivityUsable()
+                        || generation != contextGeneration
+                        || contextPreviewDialog != dialog
+                        || !dialog.isShowing()
+                        || !image.isAttachedToWindow()) {
+                    return;
+                }
+                image.setImageTintList(null);
+                RemoteAssetLoader.loadInto(
+                        MainActivity.this,
+                        url,
+                        1024,
+                        image,
+                        new RemoteAssetLoader.Callback() {
+                            @Override public void onLoaded(Bitmap bitmap) {
+                                if (!image.isAttachedToWindow()) return;
+                                image.setAlpha(0f);
+                                image.animate().alpha(1f).setDuration(150L).start();
+                            }
+
+                            @Override public void onError(Throwable error) {
+                                if (!isActivityUsable()
+                                        || contextPreviewDialog != dialog
+                                        || !dialog.isShowing()) {
+                                    return;
+                                }
+                                Toast.makeText(
+                                        MainActivity.this,
+                                        "No se pudo cargar la vista previa",
+                                        Toast.LENGTH_SHORT).show();
+                                dialog.dismiss();
+                            }
+                        });
+            }, 80L);
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Preview dialog show failed", error);
+            contextPreviewDialog = null;
+            try { dialog.dismiss(); } catch (RuntimeException ignored) { }
+        }
     }
+
 
     private void enqueueContextDownload(
             String url,
@@ -3119,11 +3585,28 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void dismissContextMenuImmediate() {
-        if (contextMenuPopup != null) contextMenuPopup.dismiss();
-        contextMenuPopup = null;
-        if (contextPreviewPopup != null) contextPreviewPopup.dismiss();
-        contextPreviewPopup = null;
+        contextGeneration++;
+        AlertDialog menu = contextMenuDialog;
+        contextMenuDialog = null;
+        if (menu != null) {
+            try {
+                if (menu.isShowing()) menu.dismiss();
+            } catch (RuntimeException error) {
+                Log.w(TAG, "Unable to dismiss context menu", error);
+            }
+        }
+
+        AlertDialog preview = contextPreviewDialog;
+        contextPreviewDialog = null;
+        if (preview != null) {
+            try {
+                if (preview.isShowing()) preview.dismiss();
+            } catch (RuntimeException error) {
+                Log.w(TAG, "Unable to dismiss preview", error);
+            }
+        }
     }
+
 
     private String firstNonEmpty(String... values) {
         if (values == null) return "";
@@ -3134,10 +3617,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void showDownloadProgress(String recordId) {
-        if (appRoot == null || recordId == null) return;
+        if (appRoot == null || recordId == null || !isActivityUsable()) return;
 
         View previous = appRoot.findViewWithTag("download-notice");
-        if (previous != null) appRoot.removeView(previous);
+        if (previous != null && previous.getParent() instanceof ViewGroup) {
+            ((ViewGroup) previous.getParent()).removeView(previous);
+        }
         if (downloadNoticeTicker != null) {
             mainHandler.removeCallbacks(downloadNoticeTicker);
         }
@@ -3145,61 +3630,46 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         FrameLayout notice = new FrameLayout(this);
         notice.setTag("download-notice");
         notice.setBackgroundResource(R.drawable.bg_download_notice_edge);
-        notice.setElevation(dp(20));
+        notice.setElevation(dp(14));
         notice.setClickable(true);
 
         LinearLayout body = new LinearLayout(this);
         body.setGravity(Gravity.CENTER_VERTICAL);
-        body.setPadding(dp(12), dp(9), dp(8), dp(11));
+        body.setPadding(dp(9), dp(6), dp(9), dp(8));
 
         FrameLayout iconShell = new FrameLayout(this);
         iconShell.setBackgroundResource(R.drawable.bg_download_icon_glow);
-
         ImageView icon = new ImageView(this);
         icon.setImageResource(R.drawable.ic_downloads);
         icon.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_accent)));
         icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         iconShell.addView(icon, new FrameLayout.LayoutParams(
-                dp(34), dp(34), Gravity.CENTER));
-        body.addView(iconShell, new LinearLayout.LayoutParams(dp(58), dp(58)));
+                dp(21), dp(21), Gravity.CENTER));
+        body.addView(iconShell, new LinearLayout.LayoutParams(dp(38), dp(38)));
 
         LinearLayout center = new LinearLayout(this);
         center.setOrientation(LinearLayout.VERTICAL);
         center.setGravity(Gravity.CENTER_VERTICAL);
-        center.setPadding(dp(11), 0, dp(8), 0);
+        center.setPadding(dp(9), 0, dp(5), 0);
 
-        TextView title = text("Descargando", 15, R.color.zen_text);
+        TextView title = text("Iniciando descarga…", 12, R.color.zen_text);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setSingleLine(true);
+        title.setEllipsize(TextUtils.TruncateAt.MIDDLE);
 
-        TextView subtitle = text("Preparando archivo…", 11, R.color.zen_muted);
-        subtitle.setSingleLine(true);
-        subtitle.setEllipsize(TextUtils.TruncateAt.MIDDLE);
-
-        TextView details = text("Calculando velocidad", 10, R.color.zen_muted);
+        TextView details = text("Preparando archivo", 9, R.color.zen_muted);
         details.setSingleLine(true);
         details.setEllipsize(TextUtils.TruncateAt.END);
-        details.setPadding(0, dp(4), 0, 0);
+        details.setPadding(0, dp(2), 0, 0);
 
         center.addView(title);
-        center.addView(subtitle);
         center.addView(details);
-        body.addView(center, new LinearLayout.LayoutParams(0, dp(70), 1f));
+        body.addView(center, new LinearLayout.LayoutParams(0, dp(44), 1f));
 
-        TextView view = text("VER", 12, R.color.zen_accent);
-        view.setTypeface(Typeface.DEFAULT_BOLD);
-        view.setGravity(Gravity.CENTER);
-        view.setPadding(dp(11), 0, dp(11), 0);
-        view.setBackgroundResource(R.drawable.bg_download_action);
-        view.setOnClickListener(v -> {
-            if (notice.getParent() == appRoot) appRoot.removeView(notice);
-            if (downloadNoticeTicker != null) {
-                mainHandler.removeCallbacks(downloadNoticeTicker);
-            }
-            ZenPanelController.showDownloads(this, browser, this::showSidebarPopup);
-        });
-        body.addView(view, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(42)));
+        TextView percentView = text("", 10, R.color.zen_accent);
+        percentView.setTypeface(Typeface.DEFAULT_BOLD);
+        percentView.setGravity(Gravity.CENTER);
+        body.addView(percentView, new LinearLayout.LayoutParams(dp(44), dp(40)));
 
         notice.addView(body, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -3211,48 +3681,55 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         edge.setProgressDrawable(getDrawable(R.drawable.progress_download_edge));
         edge.setProgressBackgroundTintList(ColorStateList.valueOf(Color.TRANSPARENT));
         FrameLayout.LayoutParams edgeParams = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(4), Gravity.BOTTOM);
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(3), Gravity.BOTTOM);
         edgeParams.leftMargin = dp(1);
         edgeParams.rightMargin = dp(1);
         edgeParams.bottomMargin = dp(1);
         notice.addView(edge, edgeParams);
 
         int displayWidth = getResources().getDisplayMetrics().widthPixels;
-        int targetWidth = Math.min(dp(wideLayout ? 620 : 480), displayWidth - dp(24));
+        int targetWidth = Math.min(dp(318), displayWidth - dp(32));
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                 targetWidth,
-                dp(94),
+                dp(66),
                 Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         params.bottomMargin = safeInsetBottom + dp(14);
         appRoot.addView(notice, params);
 
+        notice.setOnClickListener(v -> {
+            if (notice.getParent() instanceof ViewGroup) {
+                ((ViewGroup) notice.getParent()).removeView(notice);
+            }
+            if (downloadNoticeTicker != null) {
+                mainHandler.removeCallbacks(downloadNoticeTicker);
+            }
+            ZenPanelController.showDownloads(this, browser, this::showSidebarPopup);
+        });
+
         notice.setAlpha(0f);
-        notice.setScaleX(.985f);
-        notice.setScaleY(.985f);
-        notice.setTranslationY(dp(16));
+        notice.setTranslationY(dp(12));
         notice.animate()
                 .alpha(1f)
-                .scaleX(1f)
-                .scaleY(1f)
                 .translationY(0f)
-                .setDuration(190L)
+                .setDuration(145L)
                 .setInterpolator(new android.view.animation.DecelerateInterpolator())
                 .start();
 
         final boolean[] finishing = {false};
         downloadNoticeTicker = new Runnable() {
             @Override public void run() {
-                if (notice.getParent() != appRoot) return;
+                if (!isActivityUsable() || notice.getParent() != appRoot) return;
 
                 DownloadStore.Record record =
                         DownloadStore.get(MainActivity.this, recordId);
                 if (record == null) {
-                    fadeDownloadNotice(notice, 260L);
+                    fadeDownloadNotice(notice, 150L);
                     return;
                 }
 
-                subtitle.setText(record.name == null || record.name.trim().isEmpty()
-                        ? "Archivo" : record.name);
+                title.setText(record.name == null || record.name.trim().isEmpty()
+                        ? "Descargando archivo"
+                        : record.name);
 
                 int percent = record.total > 0L
                         ? (int) Math.min(100L, record.bytes * 100L / record.total)
@@ -3264,16 +3741,19 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 if (!edge.isIndeterminate()) {
                     edge.setProgress(percent, true);
                 }
+                percentView.setText(record.total > 0L ? percent + "%" : "");
 
                 if (DownloadStore.COMPLETE.equals(record.status)) {
                     title.setText("Descarga completada");
-                    details.setText(formatBytes(record.bytes) + "   ·   100%");
+                    details.setText(formatBytes(record.bytes));
+                    percentView.setText("100%");
                     edge.setIndeterminate(false);
                     edge.setProgress(100, true);
                     if (!finishing[0]) {
                         finishing[0] = true;
                         mainHandler.postDelayed(
-                                () -> fadeDownloadNotice(notice, 180L), 1900L);
+                                () -> fadeDownloadNotice(notice, 140L),
+                                1300L);
                     }
                     return;
                 }
@@ -3281,33 +3761,32 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 if (DownloadStore.FAILED.equals(record.status)
                         || DownloadStore.CANCELLED.equals(record.status)) {
                     title.setText(DownloadStore.CANCELLED.equals(record.status)
-                            ? "Descarga cancelada" : "Error en la descarga");
+                            ? "Descarga cancelada"
+                            : "Error en la descarga");
                     details.setText(record.error == null || record.error.trim().isEmpty()
-                            ? "No se pudo completar"
+                            ? "Toca para abrir Descargas"
                             : record.error);
+                    percentView.setText("");
                     edge.setIndeterminate(false);
                     if (!finishing[0]) {
                         finishing[0] = true;
                         mainHandler.postDelayed(
-                                () -> fadeDownloadNotice(notice, 180L), 2300L);
+                                () -> fadeDownloadNotice(notice, 150L),
+                                2200L);
                     }
                     return;
                 }
 
-                title.setText(DownloadStore.QUEUED.equals(record.status)
-                        ? "Descarga en espera" : "Descargando");
                 String amount = record.total > 0L
                         ? formatBytes(record.bytes) + " / " + formatBytes(record.total)
                         : formatBytes(record.bytes);
-                details.setText(formatRate(record.bytesPerSecond)
-                        + "   ·   " + amount
-                        + (record.total > 0L ? "   ·   " + percent + "%" : ""));
-
-                mainHandler.postDelayed(this, 400L);
+                details.setText(formatRate(record.bytesPerSecond) + "  ·  " + amount);
+                mainHandler.postDelayed(this, 450L);
             }
         };
         mainHandler.post(downloadNoticeTicker);
     }
+
 
     private void fadeDownloadNotice(View notice, long duration) {
         if (notice == null || notice.getParent() != appRoot) return;
@@ -3412,7 +3891,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         try {
             BrowserTab tab = browser.getActiveTab();
             if (tab == null) return;
-            if (tab.loading && contextMenuPopup != null) dismissContextMenuImmediate();
+            if (tab.loading && contextMenuDialog != null) dismissContextMenuImmediate();
             boolean sessionChanged = displayedSession != tab.session;
             attachSession(tab.session);
             String paintCoverKey = tab.id + ":" + tab.navigationSerial;

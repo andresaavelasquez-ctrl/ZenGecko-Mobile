@@ -200,7 +200,9 @@ public final class QuickAccessStore {
     }
 
     public static String automaticIconUrl(String rawUrl) {
-        String url = normalizeUrl(rawUrl);
+        String original = rawUrl == null ? "" : rawUrl.trim();
+        if (original.isEmpty()) return "";
+        String url = normalizeUrl(original);
         try {
             Uri uri = Uri.parse(url);
             if (uri.getScheme() == null || uri.getHost() == null) return "";
@@ -209,6 +211,7 @@ public final class QuickAccessStore {
             return "";
         }
     }
+
 
     public static String host(String rawUrl) {
         if (rawUrl == null) return "";

@@ -3,6 +3,8 @@ package com.andres.zengecko;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -24,6 +26,10 @@ public final class BrowserRepository {
         void onBrowserStateChanged();
         default void onFullScreenChanged(GeckoSession session, boolean fullScreen) { }
         default void onDownloadRequested(WebResponse response) { }
+        default void onPageStarted(
+                GeckoSession session,
+                String url,
+                boolean hadValidPaint) { }
         default void onPageFinished(GeckoSession session, boolean success) { }
         default void onPaintStatusReset(GeckoSession session) { }
         default void onFirstComposite(GeckoSession session) { }
@@ -73,6 +79,8 @@ public final class BrowserRepository {
     private SearchEngine searchEngine = SearchEngine.DUCKDUCKGO;
     private ClosedTab lastClosedTab;
     private boolean appForeground = true;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private int sessionActivityGeneration;
 
     private BrowserRepository(Context context) {
         this.context = context.getApplicationContext();
@@ -403,12 +411,14 @@ public final class BrowserRepository {
 
         session.setProgressDelegate(new GeckoSession.ProgressDelegate() {
             @Override public void onPageStart(GeckoSession source, String url) {
+                boolean hadValidPaint = tab.hasValidPaint;
                 tab.navigationSerial++;
                 tab.loading = true;
                 tab.progress = 5;
                 tab.url = url;
                 tab.showStartPage = url == null || "about:blank".equals(url);
                 tab.hasValidPaint = tab.showStartPage;
+                notifyPageStarted(source, url, hadValidPaint);
                 notifyObservers();
             }
             @Override public void onProgressChange(GeckoSession ignored, int progress) {
@@ -462,13 +472,29 @@ public final class BrowserRepository {
     }
 
     private void updateSessionActivity() {
+        final int generation = ++sessionActivityGeneration;
+        final String selectedId = activeTabId;
         for (BrowserTab item : tabs) {
             if (item.session == null || !item.session.isOpen()) continue;
-            try {
-                item.session.setActive(appForeground && item.id.equals(activeTabId));
-            } catch (RuntimeException ignored) { }
+            if (item.id.equals(selectedId)) {
+                try {
+                    item.session.setActive(appForeground);
+                } catch (RuntimeException ignored) { }
+            }
         }
+
+        mainHandler.postDelayed(() -> {
+            if (generation != sessionActivityGeneration) return;
+            for (BrowserTab item : tabs) {
+                if (item.session == null || !item.session.isOpen()) continue;
+                boolean active = appForeground && item.id.equals(activeTabId);
+                try {
+                    item.session.setActive(active);
+                } catch (RuntimeException ignored) { }
+            }
+        }, 280L);
     }
+
 
     private void recoverCrashedTab(BrowserTab tab) {
         if (tab == null) return;
@@ -697,6 +723,16 @@ public final class BrowserRepository {
     private void notifyPageIcon(GeckoSession session, String iconUrl) {
         List<Observer> copy = new ArrayList<>(observers);
         for (Observer observer : copy) observer.onPageIcon(session, iconUrl);
+    }
+
+    private void notifyPageStarted(
+            GeckoSession session,
+            String url,
+            boolean hadValidPaint) {
+        List<Observer> copy = new ArrayList<>(observers);
+        for (Observer observer : copy) {
+            observer.onPageStarted(session, url, hadValidPaint);
+        }
     }
 
     private void notifyPageFinished(GeckoSession session, boolean success) {

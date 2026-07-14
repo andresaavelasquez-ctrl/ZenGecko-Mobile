@@ -164,3 +164,10 @@
 
 - Restaura el método `installSafeAreaInsets()` eliminado accidentalmente.
 - Corrige la compilación de `MainActivity`.
+
+## 0.1.14 — Stability & Rendering
+
+- Corrige cierres en el menú contextual y en el editor de accesos.
+- Mejora la retención de superficie durante navegación y cambios de pestaña.
+- Reduce y contiene el aviso visual de descargas.
+- Endurece la carga asíncrona de imágenes frente a vistas destruidas.

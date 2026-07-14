@@ -54,7 +54,12 @@ public final class RemoteAssetLoader {
         }
         String clean = url.trim();
         String key = digest(clean);
-        target.setTag(R.id.zen_remote_asset_tag, key);
+        try {
+            target.setTag(R.id.zen_remote_asset_tag, key);
+        } catch (RuntimeException error) {
+            if (callback != null) callback.onError(error);
+            return;
+        }
 
         synchronized (MEMORY) {
             Bitmap cached = MEMORY.get(key);
@@ -76,6 +81,13 @@ public final class RemoteAssetLoader {
             }
             fetch(app, clean, key, maxPixels, target, callback);
         });
+    }
+
+    public static void cancel(ImageView target) {
+        if (target == null) return;
+        try {
+            target.setTag(R.id.zen_remote_asset_tag, null);
+        } catch (RuntimeException ignored) { }
     }
 
     public static void clear(Context context) {
@@ -160,12 +172,24 @@ public final class RemoteAssetLoader {
             Bitmap bitmap,
             Callback callback) {
         MAIN.post(() -> {
-            if (target != null && key.equals(target.getTag(R.id.zen_remote_asset_tag))) {
-                target.setImageBitmap(bitmap);
+            boolean valid = false;
+            try {
+                valid = target != null
+                        && target.isAttachedToWindow()
+                        && key.equals(target.getTag(R.id.zen_remote_asset_tag));
+                if (valid) target.setImageBitmap(bitmap);
+            } catch (RuntimeException error) {
+                valid = false;
             }
-            if (callback != null) callback.onLoaded(bitmap);
+
+            if (callback != null && valid) {
+                try {
+                    callback.onLoaded(bitmap);
+                } catch (RuntimeException ignored) { }
+            }
         });
     }
+
 
     private static void deliverError(Callback callback, Throwable error) {
         if (callback == null) return;
