@@ -218,7 +218,7 @@ public final class DownloadStore {
             request.setDescription("Descarga de ZenGecko");
             request.setNotificationVisibility(
                     DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            request.setAllowedOverMetered(true);
+            request.setAllowedOverMetered(ZenPanelController.downloadsAllowedOnMetered(app));
             request.setAllowedOverRoaming(false);
             request.setDestinationInExternalPublicDir(
                     Environment.DIRECTORY_DOWNLOADS, "ZenGecko/" + record.name);

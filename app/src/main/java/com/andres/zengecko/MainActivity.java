@@ -89,6 +89,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private GeckoSession displayedSession;
     private boolean wideLayout;
     private boolean rendering;
+    private boolean renderScheduled;
     private boolean tabTransitionRunning;
     private boolean contentFullScreen;
     private boolean manualFullScreen;
@@ -146,7 +147,9 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         super.onDestroy();
     }
 
-    @Override public void onBrowserStateChanged() { runOnUiThread(this::render); }
+    @Override public void onBrowserStateChanged() {
+        runOnUiThread(this::scheduleRender);
+    }
 
     @Override public void onFullScreenChanged(GeckoSession session, boolean fullScreen) {
         runOnUiThread(() -> {
@@ -266,14 +269,15 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         toolbarView = createToolbar();
         browserColumn.addView(toolbarView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
 
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setMax(100);
-        progressBar.setProgressTintList(ColorStateList.valueOf(getColor(R.color.zen_accent)));
+        progressBar.setProgressDrawable(getDrawable(R.drawable.progress_zen));
         progressBar.setProgressBackgroundTintList(ColorStateList.valueOf(Color.TRANSPARENT));
+        progressBar.setAlpha(0f);
         browserColumn.addView(progressBar, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(3)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(2)));
 
         webHost = new FrameLayout(this);
         webHost.setBackgroundResource(R.drawable.bg_web_frame);
@@ -404,11 +408,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         if (webHost != null && webHost.getLayoutParams() instanceof LinearLayout.LayoutParams) {
             LinearLayout.LayoutParams params =
                     (LinearLayout.LayoutParams) webHost.getLayoutParams();
-            if (immersive) params.setMargins(0, 0, 0, 0);
-            else params.setMargins(dp(6), 0, dp(6), dp(6));
+            params.setMargins(0, 0, 0, 0);
             webHost.setLayoutParams(params);
-            webHost.setElevation(immersive ? 0f : dp(2));
-            webHost.setBackgroundColor(immersive ? getColor(R.color.zen_bg) : Color.TRANSPARENT);
+            webHost.setElevation(0f);
+            webHost.setBackgroundColor(getColor(R.color.zen_bg));
         }
 
         if (immersive) root.setPadding(0, 0, 0, 0);
@@ -470,8 +473,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private View createToolbar() {
         LinearLayout bar = new LinearLayout(this);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(5), dp(3), dp(5), dp(3));
-        bar.setBackgroundColor(getColor(R.color.zen_surface));
+        bar.setPadding(dp(4), dp(2), dp(4), dp(2));
+        bar.setBackgroundResource(R.drawable.bg_toolbar_unified);
 
         sidebarButton = iconButton(R.drawable.ic_menu, "Pestañas");
         sidebarButton.setOnClickListener(v -> showSidebarPopup());
@@ -496,6 +499,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         bar.addView(forwardButton, square(36));
 
         View spacer = new View(this);
+        spacer.setBackgroundColor(Color.TRANSPARENT);
         bar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
 
         reloadButton = iconButton(R.drawable.ic_reload, "Recargar o detener");
@@ -509,7 +513,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         ImageButton search = iconButton(R.drawable.ic_search, "Desplegar búsqueda");
         search.setOnClickListener(v -> showSearchPopup(false));
-        bar.addView(search, square(40));
+        bar.addView(search, square(38));
         addressDisplay = null;
         return bar;
     }
@@ -778,33 +782,39 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private View createSidebar() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(11), dp(11), dp(11), dp(10));
+        panel.setPadding(dp(12), dp(10), dp(12), dp(10));
         panel.setBackgroundResource(R.drawable.bg_sidebar_panel);
-
-        LinearLayout header = new LinearLayout(this);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView brand = text("ZEN·GECKO", 17, R.color.zen_text);
-        brand.setTypeface(Typeface.DEFAULT_BOLD);
-        header.addView(brand, new LinearLayout.LayoutParams(0, dp(40), 1f));
-        ImageButton add = iconButton(R.drawable.ic_add, "Nueva pestaña");
-        add.setOnClickListener(v -> openNewTabFromSidebar());
-        header.addView(add, square(38));
-        panel.addView(header);
 
         LinearLayout navigation = new LinearLayout(this);
         navigation.setGravity(Gravity.CENTER_VERTICAL);
+
+        ImageButton settings = iconButton(R.drawable.ic_settings, "Configuración");
+        settings.setOnClickListener(v -> {
+            dismissSidebarPopupImmediate();
+            ZenPanelController.showSettings(this, browser);
+        });
+        navigation.addView(settings, square(38));
+
+        View divider = new View(this);
+        divider.setBackgroundColor(getColor(R.color.zen_border));
+        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(dp(1), dp(24));
+        dividerParams.setMargins(dp(5), 0, dp(5), 0);
+        navigation.addView(divider, dividerParams);
+
         ImageButton sideBack = iconButton(R.drawable.ic_back, "Atrás");
         sideBack.setOnClickListener(v -> {
             BrowserTab tab = browser.getActiveTab();
             if (tab != null && tab.session != null && tab.canGoBack) tab.session.goBack();
         });
-        navigation.addView(sideBack, square(36));
+        navigation.addView(sideBack, square(38));
+
         ImageButton sideForward = iconButton(R.drawable.ic_forward, "Adelante");
         sideForward.setOnClickListener(v -> {
             BrowserTab tab = browser.getActiveTab();
             if (tab != null && tab.session != null && tab.canGoForward) tab.session.goForward();
         });
-        navigation.addView(sideForward, square(36));
+        navigation.addView(sideForward, square(38));
+
         ImageButton sideReload = iconButton(R.drawable.ic_reload, "Recargar");
         sideReload.setOnClickListener(v -> {
             BrowserTab tab = browser.getActiveTab();
@@ -812,71 +822,186 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 if (tab.loading) tab.session.stop(); else tab.session.reload();
             }
         });
-        navigation.addView(sideReload, square(36));
+        navigation.addView(sideReload, square(38));
         panel.addView(navigation, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(38)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
 
-        TextView sidebarSearch = text("Buscar o escribir una dirección", 13, R.color.zen_muted);
+        TextView sidebarSearch = text("Buscar o escribir URL", 13, R.color.zen_muted);
         sidebarSearch.setGravity(Gravity.CENTER_VERTICAL);
         sidebarSearch.setSingleLine(true);
         sidebarSearch.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
-        sidebarSearch.setCompoundDrawablePadding(dp(8));
-        sidebarSearch.setPadding(dp(13), 0, dp(13), 0);
+        sidebarSearch.setCompoundDrawablePadding(dp(9));
+        sidebarSearch.setPadding(dp(14), 0, dp(14), 0);
         sidebarSearch.setBackgroundResource(R.drawable.bg_address);
         sidebarSearch.setOnClickListener(v -> {
             dismissSidebarPopup();
-            mainHandler.postDelayed(() -> showSearchPopup(false), 180L);
+            mainHandler.postDelayed(() -> showSearchPopup(false), 150L);
         });
         LinearLayout.LayoutParams sideSearchParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(42));
-        sideSearchParams.setMargins(0, dp(3), 0, dp(6));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
+        sideSearchParams.setMargins(0, dp(5), 0, dp(9));
         panel.addView(sidebarSearch, sideSearchParams);
+
+        panel.addView(createSidebarShortcutGrid());
+
+        LinearLayout profile = new LinearLayout(this);
+        profile.setGravity(Gravity.CENTER_VERTICAL);
+        profile.setPadding(dp(12), 0, dp(9), 0);
+        profile.setBackgroundResource(R.drawable.bg_profile_selector);
+        ImageView profileIcon = new ImageView(this);
+        profileIcon.setImageResource(R.drawable.ic_profile);
+        profileIcon.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_text)));
+        profile.addView(profileIcon, new LinearLayout.LayoutParams(dp(24), dp(24)));
+        TextView profileName = text(ZenPanelController.activeProfile(this), 14, R.color.zen_text);
+        LinearLayout.LayoutParams profileNameParams =
+                new LinearLayout.LayoutParams(0, dp(44), 1f);
+        profileNameParams.setMargins(dp(10), 0, 0, 0);
+        profile.addView(profileName, profileNameParams);
+        ImageView profileArrow = new ImageView(this);
+        profileArrow.setImageResource(R.drawable.ic_chevron_down);
+        profileArrow.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_muted)));
+        profile.addView(profileArrow, new LinearLayout.LayoutParams(dp(22), dp(22)));
+        profile.setOnClickListener(v -> {
+            dismissSidebarPopupImmediate();
+            ZenPanelController.showProfiles(this);
+        });
+        LinearLayout.LayoutParams profileParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
+        profileParams.setMargins(0, dp(7), 0, dp(5));
+        panel.addView(profile, profileParams);
+
+        TextView openLabel = label("PESTAÑAS ABIERTAS");
+        panel.addView(openLabel);
 
         ScrollView tabsScroll = new ScrollView(this);
         tabsScroll.setFillViewport(true);
+        tabsScroll.setVerticalScrollBarEnabled(false);
         LinearLayout tabsColumn = new LinearLayout(this);
         tabsColumn.setOrientation(LinearLayout.VERTICAL);
-        List<BrowserTab> visible = browser.getVisibleTabs();
-        List<BrowserTab> essentialTabs = new ArrayList<>();
-        for (BrowserTab tab : visible) if (tab.essential) essentialTabs.add(tab);
-        if (!essentialTabs.isEmpty()) {
-            tabsColumn.addView(label("ESENCIALES"));
-            tabsColumn.addView(createEssentialGrid(essentialTabs));
+        for (BrowserTab tab : browser.getVisibleTabs()) {
+            tabsColumn.addView(tabRow(tab));
         }
-        tabsColumn.addView(label("PESTAÑAS"));
-        for (BrowserTab tab : visible) if (!tab.essential) tabsColumn.addView(tabRow(tab));
+
+        TextView newTab = text("＋   Nueva pestaña", 13, R.color.zen_muted);
+        newTab.setGravity(Gravity.CENTER_VERTICAL);
+        newTab.setPadding(dp(12), 0, dp(12), 0);
+        newTab.setBackgroundResource(R.drawable.bg_button);
+        newTab.setOnClickListener(v -> openNewTabFromSidebar());
+        LinearLayout.LayoutParams newTabParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
+        newTabParams.setMargins(0, dp(3), 0, dp(4));
+        tabsColumn.addView(newTab, newTabParams);
+
         tabsScroll.addView(tabsColumn);
         panel.addView(tabsScroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         LinearLayout utilities = new LinearLayout(this);
         utilities.setGravity(Gravity.CENTER);
-        utilities.addView(utilityAction(R.drawable.ic_settings, "Configuración", () ->
-                startActivity(new Intent(this, SettingsActivity.class))),
-                new LinearLayout.LayoutParams(0, dp(54), 1f));
-        utilities.addView(utilityAction(R.drawable.ic_profile, "Perfil", () ->
-                startActivity(new Intent(this, ProfileActivity.class))),
-                new LinearLayout.LayoutParams(0, dp(54), 1f));
-        utilities.addView(utilityAction(R.drawable.ic_downloads, "Descargas", () ->
-                startActivity(new Intent(this, DownloadsActivity.class))),
-                new LinearLayout.LayoutParams(0, dp(54), 1f));
+        utilities.addView(sidebarBottomAction(R.drawable.ic_star, "Esenciales", () ->
+                ZenPanelController.showBookmarks(this, browser)),
+                new LinearLayout.LayoutParams(0, dp(50), 1f));
+        utilities.addView(sidebarBottomAction(R.drawable.ic_downloads, "Descargas", () ->
+                ZenPanelController.showDownloads(this)),
+                new LinearLayout.LayoutParams(0, dp(50), 1f));
+        utilities.addView(sidebarBottomAction(R.drawable.ic_shield, "Privacidad", () ->
+                ZenPanelController.showPrivacy(this, browser)),
+                new LinearLayout.LayoutParams(0, dp(50), 1f));
+        utilities.addView(sidebarBottomAction(R.drawable.ic_profile, "Perfiles", () ->
+                ZenPanelController.showProfiles(this)),
+                new LinearLayout.LayoutParams(0, dp(50), 1f));
         panel.addView(utilities, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(54)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
         return panel;
     }
 
-    private View utilityAction(int iconRes, String label, Runnable action) {
-        LinearLayout item = new LinearLayout(this);
-        item.setOrientation(LinearLayout.VERTICAL);
-        item.setGravity(Gravity.CENTER);
-        item.setBackgroundResource(R.drawable.bg_button);
+    private View createSidebarShortcutGrid() {
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        grid.setPadding(0, 0, 0, dp(3));
+
+        LinearLayout first = new LinearLayout(this);
+        first.setGravity(Gravity.CENTER);
+        first.addView(sidebarShortcut("YouTube", "https://youtube.com", R.drawable.ic_site_youtube));
+        first.addView(sidebarShortcut("Discord", "https://discord.com/app", R.drawable.ic_site_discord));
+        first.addView(sidebarShortcut("X", "https://x.com", R.drawable.ic_site_x));
+        first.addView(sidebarShortcut("Wikipedia", "https://wikipedia.org", R.drawable.ic_site_wikipedia));
+        grid.addView(first, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(82)));
+
+        LinearLayout second = new LinearLayout(this);
+        second.setGravity(Gravity.CENTER);
+        second.addView(sidebarShortcut("Reddit", "https://reddit.com", R.drawable.ic_site_reddit));
+        second.addView(sidebarShortcut("GitHub", "https://github.com", R.drawable.ic_site_github));
+        second.addView(sidebarShortcut("Perplexity", "https://www.perplexity.ai", R.drawable.ic_site_perplexity));
+        second.addView(sidebarAddShortcut());
+        grid.addView(second, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(82)));
+        return grid;
+    }
+
+    private View sidebarShortcut(String title, String url, int iconRes) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER);
+        card.setPadding(dp(3), dp(6), dp(3), dp(3));
+        card.setBackgroundResource(R.drawable.bg_essential_card);
+        card.setOnClickListener(v -> {
+            dismissSidebarPopup();
+            if (ZenPanelController.quickAccessOpensNewTab(this)) {
+                browser.addTab(url, true);
+            } else {
+                browser.loadInActiveTab(url);
+            }
+        });
+
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconRes);
-        icon.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_text)));
-        item.addView(icon, new LinearLayout.LayoutParams(dp(23), dp(23)));
-        TextView caption = text(label, 9, R.color.zen_muted);
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        card.addView(icon, new LinearLayout.LayoutParams(dp(30), dp(30)));
+
+        TextView caption = text(title, 9, R.color.zen_muted);
         caption.setGravity(Gravity.CENTER);
-        item.addView(caption);
+        caption.setSingleLine(true);
+        caption.setEllipsize(TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        captionParams.setMargins(0, dp(5), 0, 0);
+        card.addView(caption, captionParams);
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(74), 1f);
+        params.setMargins(dp(3), dp(3), dp(3), dp(3));
+        card.setLayoutParams(params);
+        return card;
+    }
+
+    private View sidebarAddShortcut() {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER);
+        card.setBackgroundResource(R.drawable.bg_essential_card);
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.ic_add);
+        icon.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_muted)));
+        card.addView(icon, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        TextView caption = text("Añadir", 9, R.color.zen_muted);
+        caption.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams captionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        captionParams.setMargins(0, dp(5), 0, 0);
+        card.addView(caption, captionParams);
+        card.setOnClickListener(v -> {
+            dismissSidebarPopup();
+            mainHandler.postDelayed(() -> showSearchPopup(true), 150L);
+        });
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(74), 1f);
+        params.setMargins(dp(3), dp(3), dp(3), dp(3));
+        card.setLayoutParams(params);
+        return card;
+    }
+
+    private View sidebarBottomAction(int iconRes, String description, Runnable action) {
+        ImageButton item = iconButton(iconRes, description);
         item.setOnClickListener(v -> {
             dismissSidebarPopupImmediate();
             action.run();
@@ -983,7 +1108,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         int availableWidth = Math.max(dp(240),
                 getResources().getDisplayMetrics().widthPixels - safeInsetLeft - safeInsetRight);
-        int panelWidth = Math.min(dp(372), (int) (availableWidth * .9f));
+        int panelWidth = Math.min(dp(410), (int) (availableWidth * .94f));
         int measuredHeight = appRoot == null ? 0 : appRoot.getHeight();
         int availableHeight = measuredHeight - safeInsetTop - safeInsetBottom;
         int height = availableHeight > 0 ? availableHeight : ViewGroup.LayoutParams.MATCH_PARENT;
@@ -1459,7 +1584,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     private void animateWebTransition(Runnable change) {
         if (change == null) return;
-        if (transitionScrim == null || tabTransitionRunning) {
+        if (transitionScrim == null || tabTransitionRunning
+                || !ZenPanelController.animationsEnabled(this)) {
             change.run();
             return;
         }
@@ -1537,6 +1663,33 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         }, 4300L);
     }
 
+    private void scheduleRender() {
+        if (renderScheduled) return;
+        renderScheduled = true;
+        mainHandler.postDelayed(() -> {
+            renderScheduled = false;
+            render();
+        }, 16L);
+    }
+
+    private void updateProgressBar(BrowserTab tab) {
+        if (progressBar == null) return;
+        boolean visible = tab.loading && !contentFullScreen;
+        progressBar.setProgress(tab.progress);
+        if (visible) {
+            if (progressBar.getVisibility() != View.VISIBLE) {
+                progressBar.animate().cancel();
+                progressBar.setVisibility(View.VISIBLE);
+                progressBar.setAlpha(0f);
+                progressBar.animate().alpha(1f).setDuration(100L).start();
+            }
+        } else if (progressBar.getVisibility() == View.VISIBLE) {
+            progressBar.animate().cancel();
+            progressBar.animate().alpha(0f).setDuration(150L)
+                    .withEndAction(() -> progressBar.setVisibility(View.INVISIBLE)).start();
+        }
+    }
+
     private void render() {
         if (rendering || geckoView == null) return;
         rendering = true;
@@ -1563,9 +1716,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             setEnabled(forwardButton, tab.canGoForward);
             reloadButton.setImageResource(tab.loading ? R.drawable.ic_stop : R.drawable.ic_reload);
             reloadButton.setContentDescription(tab.loading ? "Detener" : "Recargar");
-            progressBar.setVisibility(
-                    tab.loading && !contentFullScreen ? View.VISIBLE : View.INVISIBLE);
-            progressBar.setProgress(tab.progress);
+            updateProgressBar(tab);
 
             String fingerprint = sidebarFingerprint();
             if (fixedSidebar != null && !fingerprint.equals(lastSidebarFingerprint)) {
@@ -1647,8 +1798,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             value.append(tab.id).append(':')
                     .append(tab.title).append(':')
                     .append(tab.url).append(':')
-                    .append(tab.essential).append(':')
-                    .append(tab.loading).append(';');
+                    .append(tab.essential).append(';');
         }
         return value.toString();
     }

@@ -86,6 +86,11 @@ public final class BrowserRepository {
     public SearchEngine getSearchEngine() { return searchEngine; }
     public boolean canRestoreLastClosedTab() { return lastClosedTab != null; }
 
+    public void clearRecentUrls() {
+        recentUrls.clear();
+        persistAndNotify();
+    }
+
     public void setSearchEngine(SearchEngine engine) {
         SearchEngine next = engine == null ? SearchEngine.DUCKDUCKGO : engine;
         if (next == searchEngine) return;
@@ -295,8 +300,11 @@ public final class BrowserRepository {
                 notifyObservers();
             }
             @Override public void onProgressChange(GeckoSession ignored, int progress) {
+                int previous = tab.progress;
                 tab.progress = progress;
-                notifyObservers();
+                if (progress >= 100 || progress <= 5 || Math.abs(progress - previous) >= 4) {
+                    notifyObservers();
+                }
             }
             @Override public void onPageStop(GeckoSession ignored, boolean success) {
                 tab.loading = false;
@@ -341,7 +349,7 @@ public final class BrowserRepository {
             int right = formerIndex - distance;
             if (right >= 0 && right < tabs.size()) {
                 BrowserTab candidate = tabs.get(right);
-                if (candidate.essential || candidate.workspaceId.equals(activeWorkspaceId)) return candidate;
+                return candidate;
             }
         }
         return null;

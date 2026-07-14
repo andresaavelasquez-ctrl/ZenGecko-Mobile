@@ -81,3 +81,14 @@
 - Configuración, Perfil y administrador de Descargas.
 - Logos visuales en accesos rápidos.
 - README actualizado automáticamente con cada versión.
+
+## 0.1.9 — Zen Sidebar & Stability
+
+- Barra superior AMOLED unificada.
+- Barra de carga redondeada con gradiente Zen.
+- Configuración, perfiles y descargas como paneles internos.
+- Menú lateral adaptado a la referencia visual.
+- Configuraciones funcionales de motor, animaciones, pestañas y descargas.
+- Perfiles locales desplegables.
+- Menor reconstrucción durante el progreso de carga.
+- README actualizado automáticamente.
