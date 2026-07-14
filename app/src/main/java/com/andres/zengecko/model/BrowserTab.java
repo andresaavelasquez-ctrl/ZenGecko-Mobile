@@ -12,6 +12,9 @@ public final class BrowserTab {
     public boolean canGoBack;
     public boolean canGoForward;
     public boolean loading;
+    public boolean showStartPage;
+    public boolean desktopMode;
+    public boolean hasValidPaint;
     public int progress;
     public int navigationSerial;
     public GeckoSession session;
@@ -21,6 +24,9 @@ public final class BrowserTab {
         this.workspaceId = workspaceId;
         this.title = title;
         this.url = url;
+        this.showStartPage = url == null || "about:blank".equals(url);
+        this.desktopMode = false;
+        this.hasValidPaint = this.showStartPage;
         this.progress = 0;
     }
 }

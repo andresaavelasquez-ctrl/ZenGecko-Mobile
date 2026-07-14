@@ -34,6 +34,8 @@ import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
@@ -72,6 +74,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private FrameLayout webHost;
     private GeckoView geckoView;
     private View newTabSurface;
+    private FrameLayout paintGuard;
+    private TextView paintGuardStatus;
     private View transitionScrim;
     private View fixedSidebar;
     private View edgeGestureHandle;
@@ -107,6 +111,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private boolean manualFullScreen;
     private int transitionGeneration;
     private String lastPaintCoverKey = "";
+    private Runnable paintGuardTimeout;
+    private Runnable downloadNoticeTicker;
+    private OnBackInvokedCallback backInvokedCallback;
+    private boolean activityResumed;
     private int safeInsetLeft;
     private int safeInsetTop;
     private int safeInsetRight;
@@ -124,6 +132,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         browser.addObserver(this);
         initializeMechanicalKeySound();
         buildUi();
+        registerModernBackCallback();
         applySystemBars(true);
 
         Intent intent = getIntent();
@@ -135,26 +144,38 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     @Override protected void onStart() {
         super.onStart();
-        setCurrentSessionActive(true);
+        if (browser != null) browser.setAppForeground(true);
         recoverVisibleSurface();
     }
 
     @Override protected void onResume() {
         super.onResume();
-        setCurrentSessionActive(true);
+        activityResumed = true;
+        if (browser != null) browser.setAppForeground(true);
         recoverVisibleSurface();
         applyRuntimePreferences();
+        render();
+        ZenPanelController.maybeTrimCache(this);
         mainHandler.postDelayed(() -> applySystemBars(true), 60L);
     }
 
+    @Override protected void onPause() {
+        activityResumed = false;
+        super.onPause();
+    }
+
     @Override protected void onStop() {
-        setCurrentSessionActive(false);
+        if (browser != null) browser.setAppForeground(false);
         super.onStop();
     }
 
     @Override protected void onDestroy() {
         Log.i(TAG, "onDestroy");
+        activityResumed = false;
         if (browser != null) browser.removeObserver(this);
+        unregisterModernBackCallback();
+        cancelPaintGuardTimeout();
+        if (downloadNoticeTicker != null) mainHandler.removeCallbacks(downloadNoticeTicker);
         dismissSearchPopupImmediate();
         dismissSidebarPopupImmediate();
         ZenPanelController.dismiss();
@@ -199,10 +220,33 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         runOnUiThread(() -> {
             BrowserTab active = browser == null ? null : browser.getActiveTab();
             if (active == null || active.session != session) return;
-            if (ZenPanelController.pageRecoveryEnabled(this)) {
-                mainHandler.postDelayed(this::recoverVisibleSurface, success ? 90L : 260L);
+            if (!success) hidePaintGuard(session, true);
+        });
+    }
+
+    @Override public void onPaintStatusReset(GeckoSession session) {
+        runOnUiThread(() -> {
+            BrowserTab active = browser == null ? null : browser.getActiveTab();
+            if (active == null || active.session != session) return;
+            lastPaintCoverKey = "";
+            if (!activityResumed || active.showStartPage) return;
+            showPaintGuard(session, "Preparando la página…");
+        });
+    }
+
+    @Override public void onFirstComposite(GeckoSession session) {
+        runOnUiThread(() -> {
+            BrowserTab active = browser == null ? null : browser.getActiveTab();
+            if (active == null || active.session != session) return;
+            if (paintGuardStatus != null && paintGuard != null
+                    && paintGuard.getVisibility() == View.VISIBLE) {
+                paintGuardStatus.setText("Renderizando contenido…");
             }
         });
+    }
+
+    @Override public void onFirstContentfulPaint(GeckoSession session) {
+        runOnUiThread(() -> hidePaintGuard(session, false));
     }
 
     @Override public void onConfigurationChanged(Configuration newConfig) {
@@ -222,6 +266,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     @Override public void onBackPressed() {
+        handleBackNavigation();
+    }
+
+    private void handleBackNavigation() {
         if (contentFullScreen) {
             exitContentFullScreen();
             return;
@@ -244,16 +292,34 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             return;
         }
 
-        BrowserTab tab = browser.getActiveTab();
-        if (tab != null && tab.canGoBack && tab.session != null) {
+        BrowserTab tab = browser == null ? null : browser.getActiveTab();
+        if (tab != null && tab.session != null && tab.canGoBack) {
             tab.session.goBack();
             return;
         }
-        if (browser.selectPreviousTab()) {
+        if (browser != null && browser.selectPreviousTab()) {
             recoverVisibleSurface();
             return;
         }
         confirmExitApplication();
+    }
+
+    private void registerModernBackCallback() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || backInvokedCallback != null) return;
+        backInvokedCallback = this::handleBackNavigation;
+        getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                backInvokedCallback);
+    }
+
+    private void unregisterModernBackCallback() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || backInvokedCallback == null) return;
+        try {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backInvokedCallback);
+        } catch (RuntimeException ignored) { }
+        backInvokedCallback = null;
     }
 
     private void rebuildUiPreservingSession() {
@@ -287,9 +353,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void setCurrentSessionActive(boolean active) {
-        if (browser == null) return;
-        BrowserTab tab = browser.getActiveTab();
-        if (tab != null && tab.session != null) tab.session.setActive(active);
+        if (browser != null) browser.setAppForeground(active);
     }
 
     private void buildUi() {
@@ -339,6 +403,11 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         newTabSurface = createNewTabSurface();
         webHost.addView(newTabSurface, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        paintGuard = createPaintGuard();
+        paintGuard.setVisibility(View.GONE);
+        webHost.addView(paintGuard, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         transitionScrim = new View(this);
@@ -467,30 +536,90 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         else root.setPadding(safeInsetLeft, safeInsetTop, safeInsetRight, safeInsetBottom);
 
         root.requestLayout();
-        if (geckoView != null) {
-            geckoView.requestLayout();
-            geckoView.invalidate();
-        }
+        if (geckoView != null) geckoView.requestLayout();
     }
 
     private void recoverVisibleSurface() {
         if (geckoView == null || browser == null) return;
-        Runnable recover = () -> {
-            BrowserTab active = browser.getActiveTab();
-            if (active == null || active.session == null) return;
-            try {
-                active.session.setActive(true);
-                if (displayedSession != active.session) attachSession(active.session);
-                geckoView.requestLayout();
-                geckoView.postInvalidateOnAnimation();
-            } catch (RuntimeException error) {
-                Log.w(TAG, "Unable to recover Gecko surface", error);
+        BrowserTab active = browser.getActiveTab();
+        if (active == null || active.session == null) return;
+        try {
+            if (displayedSession != active.session) attachSession(active.session);
+            geckoView.requestLayout();
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Unable to restore the active Gecko session", error);
+        }
+    }
+
+    private FrameLayout createPaintGuard() {
+        FrameLayout guard = new FrameLayout(this);
+        guard.setBackgroundResource(R.drawable.bg_paint_guard);
+        guard.setClickable(false);
+
+        LinearLayout center = new LinearLayout(this);
+        center.setOrientation(LinearLayout.VERTICAL);
+        center.setGravity(Gravity.CENTER);
+
+        ProgressBar spinner = new ProgressBar(this);
+        spinner.setIndeterminate(true);
+        spinner.setIndeterminateTintList(
+                ColorStateList.valueOf(getColor(R.color.zen_accent)));
+        center.addView(spinner, new LinearLayout.LayoutParams(dp(34), dp(34)));
+
+        paintGuardStatus = text("Preparando la página…", 12, R.color.zen_muted);
+        paintGuardStatus.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        statusParams.setMargins(0, dp(10), 0, 0);
+        center.addView(paintGuardStatus, statusParams);
+
+        guard.addView(center, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER));
+        return guard;
+    }
+
+    private void showPaintGuard(GeckoSession session, String message) {
+        if (paintGuard == null || browser == null) return;
+        BrowserTab active = browser.getActiveTab();
+        if (active == null || active.session != session || active.showStartPage) return;
+        if (paintGuardStatus != null) paintGuardStatus.setText(message);
+        paintGuard.animate().cancel();
+        paintGuard.setAlpha(1f);
+        paintGuard.setVisibility(View.VISIBLE);
+        cancelPaintGuardTimeout();
+        paintGuardTimeout = () -> {
+            BrowserTab current = browser == null ? null : browser.getActiveTab();
+            if (current == null || current.session != session || paintGuard == null) return;
+            Log.w(TAG, "Paint guard still waiting for " + current.url);
+            if (paintGuardStatus != null) {
+                paintGuardStatus.setText("La página sigue preparando su contenido…");
             }
         };
-        mainHandler.post(recover);
-        if (ZenPanelController.pageRecoveryEnabled(this)) {
-            mainHandler.postDelayed(recover, 180L);
-            mainHandler.postDelayed(recover, 650L);
+        mainHandler.postDelayed(paintGuardTimeout, 8000L);
+    }
+
+    private void hidePaintGuard(GeckoSession session, boolean immediate) {
+        if (paintGuard == null || browser == null) return;
+        BrowserTab active = browser.getActiveTab();
+        if (active == null || active.session != session) return;
+        cancelPaintGuardTimeout();
+        paintGuard.animate().cancel();
+        if (immediate || !ZenPanelController.animationsEnabled(this)) {
+            paintGuard.setAlpha(0f);
+            paintGuard.setVisibility(View.GONE);
+        } else {
+            paintGuard.animate().alpha(0f).setDuration(120L)
+                    .withEndAction(() -> paintGuard.setVisibility(View.GONE)).start();
+        }
+    }
+
+    private void cancelPaintGuardTimeout() {
+        if (paintGuardTimeout != null) {
+            mainHandler.removeCallbacks(paintGuardTimeout);
+            paintGuardTimeout = null;
         }
     }
 
@@ -526,30 +655,30 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private View createToolbar() {
         LinearLayout bar = new LinearLayout(this);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(4), dp(2), dp(4), dp(2));
-        bar.setBackgroundResource(R.drawable.bg_toolbar_unified);
+        bar.setPadding(dp(6), dp(4), dp(6), dp(4));
+        bar.setBackgroundResource(R.drawable.bg_toolbar_soft);
 
-        sidebarButton = iconButton(R.drawable.ic_menu, "Pestañas");
+        sidebarButton = toolbarButton(R.drawable.ic_menu, "Pestañas");
         sidebarButton.setOnClickListener(v -> showSidebarPopup());
-        bar.addView(sidebarButton, square(38));
+        bar.addView(sidebarButton, square(36));
 
-        ImageButton newTab = iconButton(R.drawable.ic_add, "Nueva pestaña");
+        ImageButton newTab = toolbarButton(R.drawable.ic_add, "Nueva pestaña");
         newTab.setOnClickListener(v -> openNewTabAndSearch());
-        bar.addView(newTab, square(38));
+        bar.addView(newTab, square(34));
 
-        backButton = iconButton(R.drawable.ic_back, "Atrás");
+        backButton = toolbarButton(R.drawable.ic_back, "Atrás");
         backButton.setOnClickListener(v -> {
             BrowserTab tab = browser.getActiveTab();
             if (tab != null && tab.session != null && tab.canGoBack) tab.session.goBack();
         });
-        bar.addView(backButton, square(36));
+        bar.addView(backButton, square(34));
 
-        forwardButton = iconButton(R.drawable.ic_forward, "Adelante");
+        forwardButton = toolbarButton(R.drawable.ic_forward, "Adelante");
         forwardButton.setOnClickListener(v -> {
             BrowserTab tab = browser.getActiveTab();
             if (tab != null && tab.session != null && tab.canGoForward) tab.session.goForward();
         });
-        bar.addView(forwardButton, square(36));
+        bar.addView(forwardButton, square(34));
 
         addressDisplay = text("Nueva pestaña", 12, R.color.zen_muted);
         addressDisplay.setGravity(Gravity.CENTER_VERTICAL);
@@ -557,26 +686,26 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         addressDisplay.setEllipsize(TextUtils.TruncateAt.MIDDLE);
         addressDisplay.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
         addressDisplay.setCompoundDrawablePadding(dp(7));
-        addressDisplay.setPadding(dp(12), 0, dp(12), 0);
-        addressDisplay.setBackgroundResource(R.drawable.bg_address_rounder);
+        addressDisplay.setPadding(dp(13), 0, dp(13), 0);
+        addressDisplay.setBackgroundResource(R.drawable.bg_address_soft);
         addressDisplay.setOnClickListener(v -> showSearchPopup(false));
         LinearLayout.LayoutParams addressParams =
-                new LinearLayout.LayoutParams(0, dp(40), 1f);
-        addressParams.setMargins(dp(4), 0, dp(4), 0);
+                new LinearLayout.LayoutParams(0, dp(38), 1f);
+        addressParams.setMargins(dp(5), 0, dp(5), 0);
         bar.addView(addressDisplay, addressParams);
 
-        reloadButton = iconButton(R.drawable.ic_reload, "Recargar o detener");
+        reloadButton = toolbarButton(R.drawable.ic_reload, "Recargar o detener");
         reloadButton.setOnClickListener(v -> {
             BrowserTab tab = browser.getActiveTab();
             if (tab != null && tab.session != null) {
                 if (tab.loading) tab.session.stop(); else tab.session.reload();
             }
         });
-        bar.addView(reloadButton, square(36));
+        bar.addView(reloadButton, square(34));
 
-        ImageButton search = iconButton(R.drawable.ic_search, "Desplegar búsqueda");
+        ImageButton search = toolbarButton(R.drawable.ic_search, "Desplegar búsqueda");
         search.setOnClickListener(v -> showSearchPopup(false));
-        bar.addView(search, square(38));
+        bar.addView(search, square(36));
         return bar;
     }
 
@@ -586,9 +715,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         homeBackgroundView = new ImageView(this);
         homeBackgroundView.setImageResource(R.drawable.zen_home_bonsai);
-        homeBackgroundView.setScaleType(wideLayout
-                ? ImageView.ScaleType.FIT_CENTER
-                : ImageView.ScaleType.CENTER_CROP);
+        homeBackgroundView.setScaleType(ImageView.ScaleType.CENTER_CROP);
         homeBackgroundView.setBackgroundColor(getColor(R.color.zen_bg));
         surface.addView(homeBackgroundView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -609,15 +736,15 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setGravity(Gravity.CENTER_HORIZONTAL);
-        page.setPadding(dp(22), dp(32), dp(22), dp(28));
+        page.setPadding(dp(18), dp(24), dp(18), dp(22));
         scroll.addView(page, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
         homeKeyView = createZenKey();
-        page.addView(homeKeyView, new LinearLayout.LayoutParams(dp(78), dp(84)));
+        page.addView(homeKeyView, new LinearLayout.LayoutParams(dp(72), dp(78)));
 
-        TextView title = text("Zen Browser", 23, R.color.zen_text);
+        TextView title = text("Zen Browser", 21, R.color.zen_text);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
@@ -641,7 +768,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         search.setOnClickListener(v -> showSearchPopup(true));
         LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
-        searchParams.setMargins(0, dp(24), 0, dp(20));
+        searchParams.setMargins(0, dp(20), 0, dp(16));
         page.addView(search, searchParams);
 
         TextView quickLabel = label("ACCESOS RÁPIDOS");
@@ -679,7 +806,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER);
         card.setBackgroundResource(R.drawable.bg_quick_site);
-        card.setPadding(dp(6), dp(8), dp(6), dp(6));
+        card.setPadding(dp(5), dp(6), dp(5), dp(5));
         card.setOnClickListener(v -> {
             if (ZenPanelController.quickAccessOpensNewTab(this)) {
                 browser.addTab(url, true);
@@ -691,9 +818,9 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         ImageView icon = new ImageView(this);
         icon.setImageResource(iconRes);
         icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
-        card.addView(icon, new LinearLayout.LayoutParams(dp(36), dp(36)));
+        card.addView(icon, new LinearLayout.LayoutParams(dp(30), dp(30)));
 
-        TextView label = text(title, 11, R.color.zen_muted);
+        TextView label = text(title, 10, R.color.zen_muted);
         label.setGravity(Gravity.CENTER);
         label.setSingleLine(true);
         LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
@@ -701,8 +828,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         labelParams.setMargins(0, dp(5), 0, 0);
         card.addView(label, labelParams);
 
-        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(dp(82), dp(72));
-        cardParams.setMargins(dp(4), 0, dp(4), 0);
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(dp(72), dp(64));
+        cardParams.setMargins(dp(3), 0, dp(3), 0);
         card.setLayoutParams(cardParams);
         return card;
     }
@@ -886,7 +1013,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private View createSidebar() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(12), dp(10), dp(12), dp(10));
+        panel.setPadding(dp(10), dp(8), dp(10), dp(8));
         panel.setBackgroundResource(R.drawable.bg_sidebar_panel);
 
         LinearLayout brand = new LinearLayout(this);
@@ -911,7 +1038,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         brandLabelParams.setMargins(dp(10), 0, 0, 0);
         brand.addView(brandLabels, brandLabelParams);
         panel.addView(brand, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
 
         LinearLayout navigation = new LinearLayout(this);
         navigation.setGravity(Gravity.CENTER_VERTICAL);
@@ -960,35 +1087,37 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         });
         navigation.addView(sideReload, square(38));
         panel.addView(navigation, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(43)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(40)));
 
         panel.addView(createSidebarShortcutGrid());
 
         LinearLayout workspace = new LinearLayout(this);
         workspace.setGravity(Gravity.CENTER_VERTICAL);
-        workspace.setPadding(dp(12), 0, dp(9), 0);
+        workspace.setPadding(dp(10), 0, dp(8), 0);
         workspace.setBackgroundResource(R.drawable.bg_profile_selector);
         ImageView workspaceIcon = new ImageView(this);
-        workspaceIcon.setImageResource(R.drawable.ic_profile);
+        workspaceIcon.setImageResource(workspaceIconRes(browser.getActiveWorkspaceId()));
         workspaceIcon.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_text)));
         workspace.addView(workspaceIcon, new LinearLayout.LayoutParams(dp(24), dp(24)));
 
         TextView workspaceName = text(
                 browser.getActiveWorkspaceName(), 14, R.color.zen_text);
+        workspaceName.setGravity(Gravity.CENTER);
+        workspaceName.setTypeface(Typeface.DEFAULT_BOLD);
         LinearLayout.LayoutParams workspaceNameParams =
-                new LinearLayout.LayoutParams(0, dp(44), 1f);
-        workspaceNameParams.setMargins(dp(10), 0, 0, 0);
+                new LinearLayout.LayoutParams(0, dp(42), 1f);
+        workspaceNameParams.setMargins(dp(6), 0, dp(6), 0);
         workspace.addView(workspaceName, workspaceNameParams);
 
         ImageView workspaceArrow = new ImageView(this);
         workspaceArrow.setImageResource(R.drawable.ic_chevron_down);
         workspaceArrow.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_muted)));
-        workspace.addView(workspaceArrow, new LinearLayout.LayoutParams(dp(22), dp(22)));
+        workspace.addView(workspaceArrow, new LinearLayout.LayoutParams(dp(24), dp(24)));
 
         workspace.setOnClickListener(v -> showWorkspaceMenu(workspace));
         LinearLayout.LayoutParams workspaceParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
-        workspaceParams.setMargins(0, dp(7), 0, dp(5));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
+        workspaceParams.setMargins(0, dp(5), 0, dp(3));
         panel.addView(workspace, workspaceParams);
 
         TextView openLabel = label("PESTAÑAS ABIERTAS");
@@ -1009,8 +1138,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         newTab.setBackgroundResource(R.drawable.bg_button);
         newTab.setOnClickListener(v -> openNewTabFromSidebar());
         LinearLayout.LayoutParams newTabParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
-        newTabParams.setMargins(0, dp(3), 0, dp(4));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(40));
+        newTabParams.setMargins(0, dp(2), 0, dp(3));
         tabsColumn.addView(newTab, newTabParams);
 
         tabsScroll.addView(tabsColumn);
@@ -1024,68 +1153,68 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 "Favoritos",
                 () -> ZenPanelController.showFavorites(
                         this, browser, this::showSidebarPopup)),
-                new LinearLayout.LayoutParams(0, dp(50), 1f));
+                new LinearLayout.LayoutParams(0, dp(46), 1f));
         utilities.addView(sidebarBottomAction(
                 R.drawable.ic_downloads,
                 "Descargas",
                 () -> ZenPanelController.showDownloads(
                         this, browser, this::showSidebarPopup)),
-                new LinearLayout.LayoutParams(0, dp(50), 1f));
+                new LinearLayout.LayoutParams(0, dp(46), 1f));
         utilities.addView(sidebarBottomAction(
                 R.drawable.ic_history,
                 "Historial",
                 () -> ZenPanelController.showHistory(
                         this, browser, this::showSidebarPopup)),
-                new LinearLayout.LayoutParams(0, dp(50), 1f));
+                new LinearLayout.LayoutParams(0, dp(46), 1f));
         utilities.addView(sidebarBottomAction(
                 R.drawable.ic_profile,
                 "Perfil",
                 () -> ZenPanelController.showProfiles(
                         this, this::showSidebarPopup)),
-                new LinearLayout.LayoutParams(0, dp(50), 1f));
+                new LinearLayout.LayoutParams(0, dp(46), 1f));
         panel.addView(utilities, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
         return panel;
     }
 
     private View createSidebarShortcutGrid() {
         LinearLayout grid = new LinearLayout(this);
         grid.setOrientation(LinearLayout.VERTICAL);
-        grid.setPadding(0, dp(7), 0, dp(3));
+        grid.setPadding(0, dp(5), 0, dp(2));
 
         LinearLayout first = new LinearLayout(this);
         first.setGravity(Gravity.CENTER);
         first.addView(sidebarShortcut(
                 "YouTube", "https://youtube.com", R.drawable.ic_shortcut_youtube),
-                new LinearLayout.LayoutParams(0, dp(72), 1f));
+                new LinearLayout.LayoutParams(0, dp(60), 1f));
         first.addView(sidebarShortcut(
                 "Discord", "https://discord.com/app", R.drawable.ic_shortcut_discord),
-                new LinearLayout.LayoutParams(0, dp(72), 1f));
+                new LinearLayout.LayoutParams(0, dp(60), 1f));
         first.addView(sidebarShortcut(
                 "X", "https://x.com", R.drawable.ic_shortcut_x),
-                new LinearLayout.LayoutParams(0, dp(72), 1f));
+                new LinearLayout.LayoutParams(0, dp(60), 1f));
         first.addView(sidebarShortcut(
                 "Wikipedia", "https://wikipedia.org", R.drawable.ic_shortcut_wikipedia),
-                new LinearLayout.LayoutParams(0, dp(72), 1f));
+                new LinearLayout.LayoutParams(0, dp(60), 1f));
         grid.addView(first, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(74)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(62)));
 
         LinearLayout second = new LinearLayout(this);
         second.setGravity(Gravity.CENTER);
         second.addView(sidebarShortcut(
                 "Reddit", "https://reddit.com", R.drawable.ic_shortcut_reddit),
-                new LinearLayout.LayoutParams(0, dp(72), 1f));
+                new LinearLayout.LayoutParams(0, dp(60), 1f));
         second.addView(sidebarShortcut(
                 "GitHub", "https://github.com", R.drawable.ic_shortcut_github),
-                new LinearLayout.LayoutParams(0, dp(72), 1f));
+                new LinearLayout.LayoutParams(0, dp(60), 1f));
         second.addView(sidebarShortcut(
                 "Perplexity", "https://www.perplexity.ai", R.drawable.ic_shortcut_perplexity),
-                new LinearLayout.LayoutParams(0, dp(72), 1f));
+                new LinearLayout.LayoutParams(0, dp(60), 1f));
         second.addView(sidebarShortcut(
                 "Añadir", null, R.drawable.ic_add),
-                new LinearLayout.LayoutParams(0, dp(72), 1f));
+                new LinearLayout.LayoutParams(0, dp(60), 1f));
         grid.addView(second, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(74)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(62)));
         return grid;
     }
 
@@ -1093,7 +1222,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER);
-        card.setPadding(dp(3), dp(6), dp(3), dp(4));
+        card.setPadding(dp(3), dp(4), dp(3), dp(3));
         card.setBackgroundResource(R.drawable.bg_sidebar_shortcut);
         card.setContentDescription(title);
 
@@ -1103,21 +1232,21 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         if (iconRes == R.drawable.ic_add) {
             icon.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_muted)));
         }
-        card.addView(icon, new LinearLayout.LayoutParams(dp(28), dp(28)));
+        card.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(24)));
 
-        TextView label = text(title, 9, R.color.zen_muted);
+        TextView label = text(title, 8, R.color.zen_muted);
         label.setGravity(Gravity.CENTER);
         label.setSingleLine(true);
         label.setEllipsize(TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        labelParams.setMargins(0, dp(4), 0, 0);
+        labelParams.setMargins(0, dp(2), 0, 0);
         card.addView(label, labelParams);
 
         LinearLayout.LayoutParams outer = new LinearLayout.LayoutParams(
-                0, dp(68), 1f);
-        outer.setMargins(dp(3), dp(2), dp(3), dp(2));
+                0, dp(57), 1f);
+        outer.setMargins(dp(2), dp(1), dp(2), dp(1));
         card.setLayoutParams(outer);
 
         card.setOnClickListener(v -> {
@@ -1175,16 +1304,33 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         for (Workspace item : browser.getWorkspaces()) {
             boolean selected = item.id.equals(browser.getActiveWorkspaceId());
-            TextView row = text(
-                    (selected ? "✓  " : "    ") + item.name,
-                    14,
-                    selected ? R.color.zen_text : R.color.zen_muted);
+            LinearLayout row = new LinearLayout(this);
             row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(12), 0, dp(12), 0);
+            row.setPadding(dp(10), 0, dp(10), 0);
             row.setBackgroundResource(
                     selected ? R.drawable.bg_tab_active : R.drawable.bg_panel_card);
+
+            ImageView icon = new ImageView(this);
+            icon.setImageResource(workspaceIconRes(item.id));
+            icon.setImageTintList(ColorStateList.valueOf(getColor(
+                    selected ? R.color.zen_text : R.color.zen_muted)));
+            row.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(24)));
+
+            TextView name = text(item.name, 14,
+                    selected ? R.color.zen_text : R.color.zen_muted);
+            name.setGravity(Gravity.CENTER);
+            if (selected) name.setTypeface(Typeface.DEFAULT_BOLD);
+            LinearLayout.LayoutParams nameParams =
+                    new LinearLayout.LayoutParams(0, dp(44), 1f);
+            nameParams.setMargins(dp(8), 0, dp(8), 0);
+            row.addView(name, nameParams);
+
+            TextView check = text(selected ? "✓" : "", 15, R.color.zen_accent);
+            check.setGravity(Gravity.CENTER);
+            row.addView(check, new LinearLayout.LayoutParams(dp(24), dp(24)));
+
             row.setOnClickListener(v -> {
-                workspacePopup.dismiss();
+                if (workspacePopup != null) workspacePopup.dismiss();
                 browser.switchWorkspace(item.id);
                 refreshSidebarPopup();
             });
@@ -1200,6 +1346,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         workspacePopup.setOutsideTouchable(true);
         workspacePopup.setElevation(dp(22));
         workspacePopup.showAsDropDown(anchor, Math.max(0, anchor.getWidth() - dp(250)), dp(4));
+    }
+
+    private int workspaceIconRes(String workspaceId) {
+        if ("work".equals(workspaceId)) return R.drawable.ic_workspace_work;
+        if ("education".equals(workspaceId)) return R.drawable.ic_workspace_study;
+        return R.drawable.ic_workspace_personal;
     }
 
     private View tabRow(BrowserTab tab) {
@@ -1848,19 +2000,23 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         key.setElevation(dp(11));
         key.setClickable(true);
         key.setFocusable(true);
+        key.setSoundEffectsEnabled(false);
         key.setContentDescription("Tecla Z de Zen Browser");
 
         key.setOnTouchListener((view, event) -> {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     pressMechanicalKey(view, true);
-                    return false;
+                    return true;
                 case MotionEvent.ACTION_UP:
+                    releaseMechanicalKey(view);
+                    view.performClick();
+                    return true;
                 case MotionEvent.ACTION_CANCEL:
                     releaseMechanicalKey(view);
-                    return false;
+                    return true;
                 default:
-                    return false;
+                    return true;
             }
         });
         key.setOnClickListener(v -> { });
@@ -1925,8 +2081,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         try {
             keySoundPool.play(
                     mechanicalKeySoundId,
-                    0.34f,
-                    0.34f,
+                    0.82f,
+                    0.82f,
                     1,
                     0,
                     1.0f);
@@ -1969,7 +2125,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         }
         homeWakePlayed = true;
         homeKeyView.postDelayed(() -> {
-            pressMechanicalKey(homeKeyView, true);
+            pressMechanicalKey(homeKeyView, false);
             mainHandler.postDelayed(() -> releaseMechanicalKey(homeKeyView), 90L);
         }, 480L);
     }
@@ -1987,9 +2143,9 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         }
 
         homeBackgroundView.animate().cancel();
-        homeBackgroundView.setScaleType(wideLayout
-                ? ImageView.ScaleType.FIT_CENTER
-                : ImageView.ScaleType.CENTER_CROP);
+        // Reload after a configuration change so Android resolves the landscape resource.
+        homeBackgroundView.setImageResource(R.drawable.zen_home_bonsai);
+        homeBackgroundView.setScaleType(ImageView.ScaleType.CENTER_CROP);
 
         if (!showBackground) {
             homeBackgroundView.setAlpha(0f);
@@ -2048,9 +2204,9 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void startDownload(WebResponse response) {
-        DownloadStore.enqueue(this, response);
-        if (ZenPanelController.downloadNotificationsEnabled(this)) {
-            showDownloadStarted(response);
+        DownloadStore.Record record = DownloadStore.enqueue(this, response);
+        if (record != null && ZenPanelController.downloadNotificationsEnabled(this)) {
+            showDownloadProgress(record.id);
         }
     }
 
@@ -2066,15 +2222,16 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         return "Archivo";
     }
 
-    private void showDownloadStarted(WebResponse response) {
-        if (appRoot == null) return;
+    private void showDownloadProgress(String recordId) {
+        if (appRoot == null || recordId == null) return;
         View previous = appRoot.findViewWithTag("download-notice");
         if (previous != null) appRoot.removeView(previous);
+        if (downloadNoticeTicker != null) mainHandler.removeCallbacks(downloadNoticeTicker);
 
         LinearLayout notice = new LinearLayout(this);
         notice.setTag("download-notice");
         notice.setGravity(Gravity.CENTER_VERTICAL);
-        notice.setPadding(dp(12), dp(7), dp(8), dp(7));
+        notice.setPadding(dp(12), dp(8), dp(8), dp(8));
         notice.setBackgroundResource(R.drawable.bg_download_notice);
         notice.setElevation(dp(18));
 
@@ -2083,55 +2240,137 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         icon.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_accent)));
         notice.addView(icon, new LinearLayout.LayoutParams(dp(30), dp(30)));
 
-        LinearLayout labels = new LinearLayout(this);
-        labels.setOrientation(LinearLayout.VERTICAL);
-        TextView title = text("Descarga iniciada", 14, R.color.zen_text);
+        LinearLayout center = new LinearLayout(this);
+        center.setOrientation(LinearLayout.VERTICAL);
+        center.setPadding(dp(10), 0, dp(6), 0);
+
+        TextView title = text("Descarga iniciada", 13, R.color.zen_text);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        TextView subtitle = text(downloadDisplayName(response), 11, R.color.zen_muted);
+        TextView subtitle = text("Preparando archivo…", 10, R.color.zen_muted);
         subtitle.setSingleLine(true);
         subtitle.setEllipsize(TextUtils.TruncateAt.MIDDLE);
-        labels.addView(title);
-        labels.addView(subtitle);
-        LinearLayout.LayoutParams labelParams =
-                new LinearLayout.LayoutParams(0, dp(46), 1f);
-        labelParams.setMargins(dp(10), 0, dp(6), 0);
-        notice.addView(labels, labelParams);
+        TextView details = text("Esperando datos", 10, R.color.zen_muted);
+        details.setSingleLine(true);
 
-        TextView view = text("VER", 12, R.color.zen_accent);
+        ProgressBar bar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(100);
+        bar.setProgressDrawable(getDrawable(R.drawable.progress_download));
+        bar.setProgressBackgroundTintList(ColorStateList.valueOf(Color.TRANSPARENT));
+
+        center.addView(title);
+        center.addView(subtitle);
+        center.addView(details);
+        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(3));
+        barParams.setMargins(0, dp(5), 0, 0);
+        center.addView(bar, barParams);
+        notice.addView(center, new LinearLayout.LayoutParams(0, dp(70), 1f));
+
+        TextView view = text("VER", 11, R.color.zen_accent);
         view.setTypeface(Typeface.DEFAULT_BOLD);
         view.setGravity(Gravity.CENTER);
-        view.setPadding(dp(10), 0, dp(10), 0);
-        view.setBackgroundResource(R.drawable.bg_button);
+        view.setPadding(dp(9), 0, dp(9), 0);
+        view.setBackgroundResource(R.drawable.bg_toolbar_button);
         view.setOnClickListener(v -> {
             if (notice.getParent() == appRoot) appRoot.removeView(notice);
+            if (downloadNoticeTicker != null) mainHandler.removeCallbacks(downloadNoticeTicker);
             ZenPanelController.showDownloads(this, browser, this::showSidebarPopup);
         });
         notice.addView(view, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(42)));
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)));
 
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
-                Math.min(dp(430),
-                        getResources().getDisplayMetrics().widthPixels - dp(28)),
-                dp(62),
+                Math.min(dp(460),
+                        getResources().getDisplayMetrics().widthPixels - dp(24)),
+                dp(86),
                 Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        params.bottomMargin = safeInsetBottom + dp(16);
+        params.bottomMargin = safeInsetBottom + dp(14);
         appRoot.addView(notice, params);
 
         notice.setAlpha(0f);
         notice.setTranslationY(dp(18));
         notice.animate().alpha(1f).translationY(0f).setDuration(180L).start();
-        mainHandler.postDelayed(() -> {
-            if (notice.getParent() == appRoot) {
-                notice.animate()
-                        .alpha(0f)
-                        .translationY(dp(14))
-                        .setDuration(150L)
-                        .withEndAction(() -> {
-                            if (notice.getParent() == appRoot) appRoot.removeView(notice);
-                        })
-                        .start();
+
+        final boolean[] finishing = {false};
+        downloadNoticeTicker = new Runnable() {
+            @Override public void run() {
+                if (notice.getParent() != appRoot) return;
+                DownloadStore.Record record = DownloadStore.get(MainActivity.this, recordId);
+                if (record == null) {
+                    fadeDownloadNotice(notice, 300L);
+                    return;
+                }
+                subtitle.setText(record.name == null ? "Archivo" : record.name);
+                int percent = record.total > 0
+                        ? (int) Math.min(100L, record.bytes * 100L / record.total)
+                        : 0;
+                bar.setIndeterminate(record.total <= 0
+                        && (DownloadStore.DOWNLOADING.equals(record.status)
+                        || DownloadStore.QUEUED.equals(record.status)));
+                if (!bar.isIndeterminate()) bar.setProgress(percent);
+
+                if (DownloadStore.COMPLETE.equals(record.status)) {
+                    title.setText("Descarga completada");
+                    details.setText(formatBytes(record.bytes) + " · 100%");
+                    bar.setIndeterminate(false);
+                    bar.setProgress(100);
+                    if (!finishing[0]) {
+                        finishing[0] = true;
+                        mainHandler.postDelayed(() -> fadeDownloadNotice(notice, 170L), 1800L);
+                    }
+                    return;
+                }
+                if (DownloadStore.FAILED.equals(record.status)
+                        || DownloadStore.CANCELLED.equals(record.status)) {
+                    title.setText(DownloadStore.CANCELLED.equals(record.status)
+                            ? "Descarga cancelada" : "Error en la descarga");
+                    details.setText(record.error == null ? "" : record.error);
+                    if (!finishing[0]) {
+                        finishing[0] = true;
+                        mainHandler.postDelayed(() -> fadeDownloadNotice(notice, 170L), 2200L);
+                    }
+                    return;
+                }
+
+                title.setText(DownloadStore.QUEUED.equals(record.status)
+                        ? "Descarga en espera" : "Descargando");
+                String amount = record.total > 0
+                        ? formatBytes(record.bytes) + " / " + formatBytes(record.total)
+                        : formatBytes(record.bytes);
+                details.setText(formatRate(record.bytesPerSecond)
+                        + "   ·   " + amount
+                        + (record.total > 0 ? "   ·   " + percent + "%" : ""));
+                mainHandler.postDelayed(this, 450L);
             }
-        }, 5200L);
+        };
+        mainHandler.post(downloadNoticeTicker);
+    }
+
+    private void fadeDownloadNotice(View notice, long duration) {
+        if (notice == null || notice.getParent() != appRoot) return;
+        notice.animate().alpha(0f).translationY(dp(14)).setDuration(duration)
+                .withEndAction(() -> {
+                    if (notice.getParent() == appRoot) appRoot.removeView(notice);
+                }).start();
+    }
+
+    private String formatRate(long bytesPerSecond) {
+        if (bytesPerSecond <= 0L) return "Calculando velocidad";
+        return formatBytes(bytesPerSecond) + "/s";
+    }
+
+    private String formatBytes(long bytes) {
+        if (bytes < 0L) return "—";
+        if (bytes >= 1024L * 1024L * 1024L) {
+            return String.format(Locale.ROOT, "%.1f GB", bytes / 1073741824f);
+        }
+        if (bytes >= 1024L * 1024L) {
+            return String.format(Locale.ROOT, "%.1f MB", bytes / 1048576f);
+        }
+        if (bytes >= 1024L) {
+            return String.format(Locale.ROOT, "%.1f KB", bytes / 1024f);
+        }
+        return bytes + " B";
     }
 
     private void showUndoSnackbar() {
@@ -2210,15 +2449,22 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         try {
             BrowserTab tab = browser.getActiveTab();
             if (tab == null) return;
+            boolean sessionChanged = displayedSession != tab.session;
             attachSession(tab.session);
             String paintCoverKey = tab.id + ":" + tab.navigationSerial;
-            if (tab.loading && tab.navigationSerial > 0
-                    && !paintCoverKey.equals(lastPaintCoverKey)) {
-                geckoView.invalidate();
-                lastPaintCoverKey = paintCoverKey;
-            }
-            boolean newTab = tab.url == null || "about:blank".equals(tab.url);
+            boolean newTab = tab.showStartPage;
             newTabSurface.setVisibility(newTab ? View.VISIBLE : View.GONE);
+            if (newTab) {
+                hidePaintGuard(tab.session, true);
+                lastPaintCoverKey = "";
+            } else if (!tab.hasValidPaint
+                    && (sessionChanged || tab.loading || !paintCoverKey.equals(lastPaintCoverKey))) {
+                showPaintGuard(tab.session, "Cargando página…");
+                lastPaintCoverKey = paintCoverKey;
+            } else if (tab.hasValidPaint && paintGuard != null
+                    && paintGuard.getVisibility() == View.VISIBLE) {
+                hidePaintGuard(tab.session, false);
+            }
             if (addressDisplay != null) {
                 boolean showAddress = !newTab && ZenPanelController.showAddressBar(this);
                 addressDisplay.setVisibility(showAddress ? View.VISIBLE : View.GONE);
@@ -2253,6 +2499,13 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         } finally {
             rendering = false;
         }
+    }
+
+    private ImageButton toolbarButton(int drawableRes, String description) {
+        ImageButton button = iconButton(drawableRes, description);
+        button.setBackgroundResource(R.drawable.bg_toolbar_button);
+        button.setPadding(dp(8), dp(8), dp(8), dp(8));
+        return button;
     }
 
     private ImageButton iconButton(int drawableRes, String description) {

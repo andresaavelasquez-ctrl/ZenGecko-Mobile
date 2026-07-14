@@ -120,3 +120,21 @@
 - Movimiento ambiental lento y configurable.
 - Cuatro ajustes nuevos para fondo, movimiento, sonido y vibración.
 - Artefacto: `ZenBrowser-v0.1.11-debug`.
+
+## 0.1.12 — Stable Paint & Live Downloads
+
+- Reemplaza la recuperación visual basada en invalidaciones repetidas por eventos reales del compositor de GeckoView.
+- Añade una cubierta de primera pintura que evita mostrar superficies grises o incompletas.
+- Impide que la pantalla de Inicio aparezca brevemente durante recargas y redirecciones.
+- Unifica el botón Atrás y el gesto Atrás moderno de Android.
+- Añade progreso, porcentaje, velocidad y tamaño en tiempo real para descargas.
+- Actualiza automáticamente el panel de Descargas mientras está abierto.
+- Mantiene activa únicamente la pestaña visible y suspende multimedia en segundo plano.
+- Añade mantenimiento manual y automático de cachés temporales.
+- Añade modo escritorio por pestaña y como valor predeterminado opcional.
+- Rediseña la barra superior y compacta la interfaz vertical.
+- Reduce los accesos rápidos y centra el selector de espacios con iconos propios.
+- Mejora el sonido mecánico de la tecla Z.
+- Añade un fondo horizontal específico suministrado por el usuario.
+- Incrementa `versionCode` a 13 y `versionName` a 0.1.12.
+- Artefacto: `ZenBrowser-v0.1.12-debug`.

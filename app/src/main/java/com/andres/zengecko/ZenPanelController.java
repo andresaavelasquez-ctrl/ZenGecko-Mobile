@@ -10,6 +10,8 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -23,6 +25,7 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -34,6 +37,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import com.andres.zengecko.model.BrowserTab;
+import org.mozilla.geckoview.StorageController;
 
 public final class ZenPanelController {
     private static final String PREFS_UI = "zen_ui_prefs";
@@ -64,6 +68,9 @@ public final class ZenPanelController {
     public static final String KEY_HOME_MOTION = "home_motion";
     public static final String KEY_KEY_SOUND = "mechanical_key_sound";
     public static final String KEY_KEY_HAPTICS = "mechanical_key_haptics";
+    public static final String KEY_DESKTOP_DEFAULT = "desktop_mode_default";
+    public static final String KEY_AUTO_CACHE = "auto_cache_maintenance";
+    private static final String KEY_LAST_CACHE_CLEAR = "last_cache_clear";
 
     private static final String PREFS_PROFILES = "zen_profiles";
     private static final String KEY_ACTIVE_PROFILE = "active_profile";
@@ -71,6 +78,8 @@ public final class ZenPanelController {
 
     private static PopupWindow activePopup;
     private static Runnable activeBackAction;
+    private static final Handler UI = new Handler(Looper.getMainLooper());
+    private static Runnable activeTicker;
 
     private ZenPanelController() { }
 
@@ -183,6 +192,25 @@ public final class ZenPanelController {
         return ui(context).getBoolean(KEY_KEY_HAPTICS, true);
     }
 
+    public static boolean desktopModeDefault(Context context) {
+        return ui(context).getBoolean(KEY_DESKTOP_DEFAULT, false);
+    }
+
+    public static boolean automaticCacheMaintenance(Context context) {
+        return ui(context).getBoolean(KEY_AUTO_CACHE, true);
+    }
+
+    public static void maybeTrimCache(Activity activity) {
+        if (activity == null || !automaticCacheMaintenance(activity)) return;
+        SharedPreferences preferences = ui(activity);
+        long now = System.currentTimeMillis();
+        long last = preferences.getLong(KEY_LAST_CACHE_CLEAR, 0L);
+        if (now - last < 6L * 60L * 60L * 1000L) return;
+        long cacheSize = directorySize(activity.getCacheDir());
+        if (cacheSize < 160L * 1024L * 1024L) return;
+        clearTemporaryCaches(activity, false);
+    }
+
     public static String activeProfile(Context context) {
         return context.getSharedPreferences(PREFS_PROFILES, Context.MODE_PRIVATE)
                 .getString(KEY_ACTIVE_PROFILE, "Personal");
@@ -291,6 +319,30 @@ public final class ZenPanelController {
                 KEY_SHOW_PROGRESS,
                 true,
                 preferences));
+        BrowserTab activeTab = browser.getActiveTab();
+        if (activeTab != null) {
+            TextView desktopCurrent = actionRow(
+                    activity,
+                    "Sitio de escritorio para esta pestaña: "
+                            + (activeTab.desktopMode ? "Activado" : "Desactivado"),
+                    R.color.zen_text);
+            desktopCurrent.setOnClickListener(v -> {
+                boolean next = !activeTab.desktopMode;
+                browser.setDesktopMode(activeTab.id, next);
+                Toast.makeText(activity,
+                        next ? "Modo escritorio activado" : "Modo móvil activado",
+                        Toast.LENGTH_SHORT).show();
+                dismiss();
+                showSettings(activity, browser, returnToSidebar);
+            });
+            content.addView(desktopCurrent, rowParams(activity, 50));
+        }
+        content.addView(toggle(activity,
+                "Modo escritorio en pestañas nuevas",
+                "Usa agente y viewport de escritorio para las nuevas pestañas.",
+                KEY_DESKTOP_DEFAULT,
+                false,
+                preferences));
         content.addView(toggle(activity,
                 "Gesto desde el borde",
                 "Desliza desde la izquierda para abrir el menú.",
@@ -317,6 +369,15 @@ public final class ZenPanelController {
                 KEY_ECO_RENDER,
                 false,
                 preferences));
+        content.addView(toggle(activity,
+                "Mantenimiento automático de caché",
+                "Limpia únicamente cachés temporales cuando superan 160 MB.",
+                KEY_AUTO_CACHE,
+                true,
+                preferences));
+        TextView clearCache = actionRow(activity, "Limpiar caché temporal ahora", R.color.zen_accent);
+        clearCache.setOnClickListener(v -> clearTemporaryCaches(activity, true));
+        content.addView(clearCache, rowParams(activity, 50));
 
         content.addView(section(activity, "CONTENIDO"));
         content.addView(toggle(activity,
@@ -566,7 +627,6 @@ public final class ZenPanelController {
     public static void showDownloads(
             Activity activity, BrowserRepository browser, Runnable returnToSidebar) {
         LinearLayout content = column(activity);
-        List<DownloadStore.Record> records = DownloadStore.list(activity);
 
         TextView androidDownloads = actionRow(
                 activity,
@@ -584,15 +644,31 @@ public final class ZenPanelController {
         });
         content.addView(androidDownloads, rowParams(activity, 48));
 
-        if (records.isEmpty()) {
-            content.addView(infoCard(activity, "Todavía no hay descargas."));
-        } else {
-            for (DownloadStore.Record record : records) {
-                content.addView(downloadRow(activity, browser, returnToSidebar, record));
-            }
-        }
+        LinearLayout listHolder = new LinearLayout(activity);
+        listHolder.setOrientation(LinearLayout.VERTICAL);
+        content.addView(listHolder);
 
+        Runnable render = () -> renderDownloadList(
+                activity, browser, returnToSidebar, listHolder);
+        render.run();
         showPanel(activity, "Descargas", R.drawable.ic_downloads, content, returnToSidebar);
+        startTicker(render, 500L);
+    }
+
+    private static void renderDownloadList(
+            Activity activity,
+            BrowserRepository browser,
+            Runnable returnToSidebar,
+            LinearLayout holder) {
+        holder.removeAllViews();
+        List<DownloadStore.Record> records = DownloadStore.list(activity);
+        if (records.isEmpty()) {
+            holder.addView(infoCard(activity, "Todavía no hay descargas."));
+            return;
+        }
+        for (DownloadStore.Record record : records) {
+            holder.addView(downloadRow(activity, browser, returnToSidebar, record));
+        }
     }
 
     private static View downloadRow(
@@ -611,15 +687,37 @@ public final class ZenPanelController {
         card.addView(name);
 
         TextView status = text(activity, downloadStatus(record), 11, R.color.zen_muted);
-        status.setPadding(0, dp(activity, 4), 0, dp(activity, 5));
+        status.setPadding(0, dp(activity, 4), 0, dp(activity, 4));
         card.addView(status);
+
+        boolean active = DownloadStore.DOWNLOADING.equals(record.status)
+                || DownloadStore.QUEUED.equals(record.status);
+        if (active || DownloadStore.COMPLETE.equals(record.status)) {
+            ProgressBar progress = new ProgressBar(
+                    activity, null, android.R.attr.progressBarStyleHorizontal);
+            progress.setMax(100);
+            progress.setProgressDrawable(activity.getDrawable(R.drawable.progress_download));
+            progress.setProgressBackgroundTintList(
+                    ColorStateList.valueOf(Color.TRANSPARENT));
+            progress.setIndeterminate(active && record.total <= 0L);
+            if (!progress.isIndeterminate()) {
+                int percent = DownloadStore.COMPLETE.equals(record.status) ? 100
+                        : record.total > 0L
+                        ? (int) Math.min(100L, record.bytes * 100L / record.total)
+                        : 0;
+                progress.setProgress(percent);
+            }
+            LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(activity, 4));
+            progressParams.setMargins(0, 0, 0, dp(activity, 5));
+            card.addView(progress, progressParams);
+        }
 
         LinearLayout actions = new LinearLayout(activity);
         actions.setGravity(Gravity.END);
         if (DownloadStore.COMPLETE.equals(record.status)) {
             actions.addView(smallAction(activity, "Abrir", v -> openDownload(activity, record)));
-        } else if (DownloadStore.DOWNLOADING.equals(record.status)
-                || DownloadStore.QUEUED.equals(record.status)) {
+        } else if (active) {
             actions.addView(smallAction(activity, "Cancelar", v -> {
                 DownloadStore.cancel(activity, record.id);
                 dismiss();
@@ -1032,10 +1130,28 @@ public final class ZenPanelController {
     }
 
     public static void dismiss() {
+        stopTicker();
         PopupWindow popup = activePopup;
         activePopup = null;
         activeBackAction = null;
         if (popup != null && popup.isShowing()) popup.dismiss();
+    }
+
+    private static void startTicker(Runnable action, long delayMs) {
+        stopTicker();
+        activeTicker = new Runnable() {
+            @Override public void run() {
+                if (activePopup == null || !activePopup.isShowing()) return;
+                action.run();
+                UI.postDelayed(this, delayMs);
+            }
+        };
+        UI.postDelayed(activeTicker, delayMs);
+    }
+
+    private static void stopTicker() {
+        if (activeTicker != null) UI.removeCallbacks(activeTicker);
+        activeTicker = null;
     }
 
     private static CheckBox toggle(
@@ -1151,18 +1267,21 @@ public final class ZenPanelController {
 
     private static String downloadStatus(DownloadStore.Record record) {
         if (DownloadStore.COMPLETE.equals(record.status)) {
-            return "Completada · " + readableSize(record.bytes);
+            return "Completada · " + readableSize(record.bytes) + " · 100%";
         }
         if (DownloadStore.CANCELLED.equals(record.status)) return "Cancelada";
         if (DownloadStore.FAILED.equals(record.status)) {
             return "Falló · " + (record.error == null ? "" : record.error);
         }
+        String rate = record.bytesPerSecond > 0L
+                ? readableSize(record.bytesPerSecond) + "/s"
+                : "Calculando velocidad";
         if (record.total > 0) {
             int progress = (int) Math.min(100L, record.bytes * 100L / record.total);
-            return "Descargando · " + progress + "% · "
-                    + readableSize(record.bytes) + " / " + readableSize(record.total);
+            return rate + "   ·   " + readableSize(record.bytes) + " / "
+                    + readableSize(record.total) + "   ·   " + progress + "%";
         }
-        return "Descargando · " + readableSize(record.bytes);
+        return rate + "   ·   " + readableSize(record.bytes);
     }
 
     private static String readableSize(long bytes) {
@@ -1195,6 +1314,45 @@ public final class ZenPanelController {
                         "No se encontró una aplicación compatible",
                         Toast.LENGTH_SHORT).show();
             }
+        }
+    }
+
+    private static void clearTemporaryCaches(Activity activity, boolean showMessage) {
+        try {
+            ZenGeckoApplication.runtime(activity)
+                    .getStorageController()
+                    .clearData(StorageController.ClearFlags.ALL_CACHES);
+            deleteChildren(activity.getCacheDir());
+            ui(activity).edit()
+                    .putLong(KEY_LAST_CACHE_CLEAR, System.currentTimeMillis())
+                    .apply();
+            if (showMessage) {
+                Toast.makeText(activity, "Caché temporal limpiada", Toast.LENGTH_SHORT).show();
+            }
+        } catch (RuntimeException error) {
+            if (showMessage) {
+                Toast.makeText(activity, "No se pudo limpiar la caché", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    private static long directorySize(java.io.File directory) {
+        if (directory == null || !directory.exists()) return 0L;
+        if (directory.isFile()) return directory.length();
+        long total = 0L;
+        java.io.File[] files = directory.listFiles();
+        if (files == null) return 0L;
+        for (java.io.File file : files) total += directorySize(file);
+        return total;
+    }
+
+    private static void deleteChildren(java.io.File directory) {
+        if (directory == null || !directory.isDirectory()) return;
+        java.io.File[] files = directory.listFiles();
+        if (files == null) return;
+        for (java.io.File file : files) {
+            if (file.isDirectory()) deleteChildren(file);
+            try { file.delete(); } catch (SecurityException ignored) { }
         }
     }
 

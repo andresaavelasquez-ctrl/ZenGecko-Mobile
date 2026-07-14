@@ -44,6 +44,8 @@ public final class DownloadStore {
         public String error;
         public long bytes;
         public long total;
+        public long bytesPerSecond;
+        public long updatedAt;
         public long systemId;
         public long createdAt;
 
@@ -54,6 +56,7 @@ public final class DownloadStore {
                         .put("mime", mime).put("contentUri", contentUri)
                         .put("status", status).put("error", error)
                         .put("bytes", bytes).put("total", total)
+                        .put("bytesPerSecond", bytesPerSecond).put("updatedAt", updatedAt)
                         .put("systemId", systemId).put("createdAt", createdAt);
             } catch (Exception ignored) { }
             return item;
@@ -70,8 +73,10 @@ public final class DownloadStore {
             record.error = item.optString("error", "");
             record.bytes = item.optLong("bytes", 0L);
             record.total = item.optLong("total", -1L);
+            record.bytesPerSecond = item.optLong("bytesPerSecond", 0L);
             record.systemId = item.optLong("systemId", -1L);
             record.createdAt = item.optLong("createdAt", System.currentTimeMillis());
+            record.updatedAt = item.optLong("updatedAt", record.createdAt);
             return record;
         }
     }
@@ -84,7 +89,7 @@ public final class DownloadStore {
 
     private DownloadStore() { }
 
-    public static void enqueue(Context context, WebResponse response) {
+    public static Record enqueue(Context context, WebResponse response) {
         Context app = context.getApplicationContext();
         Record record = new Record();
         record.id = UUID.randomUUID().toString();
@@ -97,6 +102,8 @@ public final class DownloadStore {
         record.error = "";
         record.systemId = -1L;
         record.createdAt = System.currentTimeMillis();
+        record.updatedAt = record.createdAt;
+        record.bytesPerSecond = 0L;
         upsert(app, record);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && response.body != null) {
@@ -110,6 +117,7 @@ public final class DownloadStore {
             }
             enqueueSystem(app, record);
         }
+        return record;
     }
 
     public static List<Record> list(Context context) {
@@ -117,6 +125,12 @@ public final class DownloadStore {
         synchronized (LOCK) {
             return read(context.getApplicationContext());
         }
+    }
+
+    public static Record get(Context context, String id) {
+        Context app = context.getApplicationContext();
+        refreshSystem(app);
+        return find(app, id);
     }
 
     public static void cancel(Context context, String id) {
@@ -141,6 +155,9 @@ public final class DownloadStore {
         old.status = QUEUED;
         old.error = "";
         old.bytes = 0;
+        old.total = -1L;
+        old.bytesPerSecond = 0L;
+        old.updatedAt = System.currentTimeMillis();
         old.systemId = -1L;
         upsert(app, old);
         enqueueSystem(app, old);
@@ -160,6 +177,8 @@ public final class DownloadStore {
         Uri target = null;
         try (InputStream source = input) {
             record.status = DOWNLOADING;
+            record.updatedAt = System.currentTimeMillis();
+            record.bytesPerSecond = 0L;
             upsert(app, record);
             ContentResolver resolver = app.getContentResolver();
             ContentValues values = new ContentValues();
@@ -175,13 +194,19 @@ public final class DownloadStore {
                 if (output == null) throw new IllegalStateException("No se pudo abrir la descarga");
                 byte[] buffer = new byte[32 * 1024];
                 long lastUpdate = 0L;
+                long previousBytes = record.bytes;
                 int read;
                 while ((read = source.read(buffer)) != -1) {
                     if (cancelled.get()) throw new InterruptedException("Cancelada");
                     output.write(buffer, 0, read);
                     record.bytes += read;
                     long now = System.currentTimeMillis();
-                    if (now - lastUpdate > 400L) {
+                    if (now - lastUpdate > 450L) {
+                        long elapsed = Math.max(1L, now - record.updatedAt);
+                        long delta = Math.max(0L, record.bytes - previousBytes);
+                        record.bytesPerSecond = delta * 1000L / elapsed;
+                        record.updatedAt = now;
+                        previousBytes = record.bytes;
                         upsert(app, record);
                         lastUpdate = now;
                     }
@@ -194,16 +219,22 @@ public final class DownloadStore {
             record.contentUri = target.toString();
             record.status = COMPLETE;
             record.error = "";
+            record.bytesPerSecond = 0L;
+            record.updatedAt = System.currentTimeMillis();
             upsert(app, record);
         } catch (InterruptedException cancelledError) {
             if (target != null) app.getContentResolver().delete(target, null, null);
             record.status = CANCELLED;
             record.error = "Cancelada";
+            record.bytesPerSecond = 0L;
+            record.updatedAt = System.currentTimeMillis();
             upsert(app, record);
         } catch (Exception error) {
             if (target != null) app.getContentResolver().delete(target, null, null);
             record.status = FAILED;
             record.error = error.getMessage() == null ? "Error de descarga" : error.getMessage();
+            record.bytesPerSecond = 0L;
+            record.updatedAt = System.currentTimeMillis();
             upsert(app, record);
         } finally {
             CANCEL_FLAGS.remove(record.id);
@@ -225,6 +256,8 @@ public final class DownloadStore {
             if (record.mime != null && !record.mime.isEmpty()) request.setMimeType(record.mime);
             record.systemId = manager.enqueue(request);
             record.status = DOWNLOADING;
+            record.updatedAt = System.currentTimeMillis();
+            record.bytesPerSecond = 0L;
             upsert(app, record);
         } catch (Exception error) {
             record.status = FAILED;
@@ -244,16 +277,25 @@ public final class DownloadStore {
             try (Cursor cursor = manager.query(new DownloadManager.Query().setFilterById(record.systemId))) {
                 if (cursor == null || !cursor.moveToFirst()) continue;
                 int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                long now = System.currentTimeMillis();
+                long previousBytes = record.bytes;
+                long previousAt = record.updatedAt > 0L ? record.updatedAt : now;
                 record.bytes = cursor.getLong(cursor.getColumnIndexOrThrow(
                         DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
                 record.total = cursor.getLong(cursor.getColumnIndexOrThrow(
                         DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
+                long elapsed = Math.max(1L, now - previousAt);
+                long delta = Math.max(0L, record.bytes - previousBytes);
+                record.bytesPerSecond = delta * 1000L / elapsed;
+                record.updatedAt = now;
                 if (status == DownloadManager.STATUS_SUCCESSFUL) {
                     Uri uri = manager.getUriForDownloadedFile(record.systemId);
                     record.contentUri = uri == null ? "" : uri.toString();
                     record.status = COMPLETE;
+                    record.bytesPerSecond = 0L;
                 } else if (status == DownloadManager.STATUS_FAILED) {
                     record.status = FAILED;
+                    record.bytesPerSecond = 0L;
                     record.error = "Descarga rechazada por Android";
                 } else if (status == DownloadManager.STATUS_PAUSED) {
                     record.status = QUEUED;
@@ -344,7 +386,7 @@ public final class DownloadStore {
             List<Record> records = read(app);
             records.removeIf(item -> record.id.equals(item.id));
             records.add(0, record);
-            while (records.size() > 60) records.remove(records.size() - 1);
+            while (records.size() > 40) records.remove(records.size() - 1);
             write(app, records);
         }
     }

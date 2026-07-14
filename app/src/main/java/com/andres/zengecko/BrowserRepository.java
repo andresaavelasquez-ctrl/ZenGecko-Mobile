@@ -12,6 +12,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.mozilla.geckoview.GeckoResult;
 import org.mozilla.geckoview.GeckoSession;
+import org.mozilla.geckoview.GeckoSessionSettings;
 import org.mozilla.geckoview.WebRequestError;
 import org.mozilla.geckoview.WebResponse;
 import com.andres.zengecko.model.BrowserTab;
@@ -23,6 +24,9 @@ public final class BrowserRepository {
         default void onFullScreenChanged(GeckoSession session, boolean fullScreen) { }
         default void onDownloadRequested(WebResponse response) { }
         default void onPageFinished(GeckoSession session, boolean success) { }
+        default void onPaintStatusReset(GeckoSession session) { }
+        default void onFirstComposite(GeckoSession session) { }
+        default void onFirstContentfulPaint(GeckoSession session) { }
     }
 
     private static final String PREFS = "browser_state";
@@ -38,6 +42,7 @@ public final class BrowserRepository {
         final String url;
         final boolean pinned;
         final boolean essential;
+        final boolean desktopMode;
 
         ClosedTab(int index, BrowserTab tab) {
             this.index = index;
@@ -46,6 +51,7 @@ public final class BrowserRepository {
             this.url = tab.url;
             this.pinned = tab.pinned;
             this.essential = tab.essential;
+            this.desktopMode = tab.desktopMode;
         }
     }
 
@@ -59,6 +65,7 @@ public final class BrowserRepository {
     private String activeTabId;
     private SearchEngine searchEngine = SearchEngine.DUCKDUCKGO;
     private ClosedTab lastClosedTab;
+    private boolean appForeground = true;
 
     private BrowserRepository(Context context) {
         this.context = context.getApplicationContext();
@@ -86,6 +93,26 @@ public final class BrowserRepository {
     public String getActiveTabId() { return activeTabId; }
     public SearchEngine getSearchEngine() { return searchEngine; }
     public boolean canRestoreLastClosedTab() { return lastClosedTab != null; }
+
+    public void setAppForeground(boolean foreground) {
+        appForeground = foreground;
+        updateSessionActivity();
+    }
+
+    public boolean setDesktopMode(String tabId, boolean enabled) {
+        BrowserTab tab = findTab(tabId);
+        if (tab == null || tab.desktopMode == enabled) return false;
+        tab.desktopMode = enabled;
+        applySessionSettings(tab);
+        if (tab.session != null && tab.session.isOpen()
+                && tab.url != null && !"about:blank".equals(tab.url)) {
+            tab.showStartPage = false;
+            tab.hasValidPaint = false;
+            tab.session.reload();
+        }
+        persistAndNotify();
+        return true;
+    }
 
     public void clearRecentUrls() {
         recentUrls.clear();
@@ -119,6 +146,7 @@ public final class BrowserRepository {
         BrowserTab target = visible.get(previous);
         activeTabId = target.id;
         ensureSession(target, true);
+        updateSessionActivity();
         persistAndNotify();
         return true;
     }
@@ -139,9 +167,11 @@ public final class BrowserRepository {
     public BrowserTab addTab(String rawUrl, boolean select) {
         String url = normalizeInput(rawUrl);
         BrowserTab tab = new BrowserTab(UUID.randomUUID().toString(), activeWorkspaceId, "Nueva pestaña", url);
+        tab.desktopMode = ZenPanelController.desktopModeDefault(context);
         tabs.add(tab);
-        ensureSession(tab, true);
         if (select) activeTabId = tab.id;
+        ensureSession(tab, true);
+        updateSessionActivity();
         persistAndNotify();
         return tab;
     }
@@ -152,6 +182,7 @@ public final class BrowserRepository {
         activeWorkspaceId = tab.workspaceId;
         activeTabId = tab.id;
         ensureSession(tab, true);
+        updateSessionActivity();
         persistAndNotify();
     }
 
@@ -175,6 +206,7 @@ public final class BrowserRepository {
             activeTabId = replacement.id;
             ensureSession(replacement, true);
         }
+        updateSessionActivity();
         persistAndNotify();
     }
 
@@ -194,12 +226,14 @@ public final class BrowserRepository {
                 closed.url == null ? "about:blank" : closed.url);
         restored.pinned = closed.pinned;
         restored.essential = closed.essential;
+        restored.desktopMode = closed.desktopMode;
 
         int index = Math.max(0, Math.min(closed.index, tabs.size()));
         tabs.add(index, restored);
         if (!restored.essential) activeWorkspaceId = restored.workspaceId;
         activeTabId = restored.id;
         ensureSession(restored, true);
+        updateSessionActivity();
         persistAndNotify();
         return restored;
     }
@@ -213,6 +247,7 @@ public final class BrowserRepository {
         }
         activeTabId = candidate.id;
         ensureSession(candidate, true);
+        updateSessionActivity();
         persistAndNotify();
     }
 
@@ -223,6 +258,7 @@ public final class BrowserRepository {
         activeWorkspaceId = workspace.id;
         BrowserTab tab = addTabInternal("about:blank", false, true);
         activeTabId = tab.id;
+        updateSessionActivity();
         persistAndNotify();
         return workspace;
     }
@@ -241,6 +277,8 @@ public final class BrowserRepository {
         ensureSession(tab, false);
         String url = normalizeInput(input);
         tab.url = url;
+        tab.showStartPage = "about:blank".equals(url);
+        tab.hasValidPaint = tab.showStartPage;
         recordRecentUrl(url);
         tab.session.loadUri(url);
         persistAndNotify();
@@ -258,16 +296,22 @@ public final class BrowserRepository {
 
     private BrowserTab addTabInternal(String url, boolean select, boolean load) {
         BrowserTab tab = new BrowserTab(UUID.randomUUID().toString(), activeWorkspaceId, "Nueva pestaña", url);
+        tab.desktopMode = ZenPanelController.desktopModeDefault(context);
         tabs.add(tab);
-        ensureSession(tab, load);
         if (select) activeTabId = tab.id;
+        ensureSession(tab, load);
+        updateSessionActivity();
         return tab;
     }
 
     private void ensureSession(BrowserTab tab, boolean loadIfNew) {
-        if (tab.session != null && tab.session.isOpen()) return;
+        if (tab.session != null && tab.session.isOpen()) {
+            applySessionSettings(tab);
+            return;
+        }
         GeckoSession session = new GeckoSession();
         tab.session = session;
+        applySessionSettings(tab);
 
         session.setContentDelegate(new GeckoSession.ContentDelegate() {
             @Override public void onTitleChange(GeckoSession ignored, String title) {
@@ -281,10 +325,19 @@ public final class BrowserRepository {
             @Override public void onExternalResponse(GeckoSession source, WebResponse response) {
                 if (tab.id.equals(activeTabId)) notifyDownload(response);
             }
+            @Override public void onPaintStatusReset(GeckoSession source) {
+                tab.hasValidPaint = false;
+                if (tab.id.equals(activeTabId)) notifyPaintStatusReset(source);
+            }
+            @Override public void onFirstComposite(GeckoSession source) {
+                if (tab.id.equals(activeTabId)) notifyFirstComposite(source);
+            }
+            @Override public void onFirstContentfulPaint(GeckoSession source) {
+                tab.hasValidPaint = true;
+                if (tab.id.equals(activeTabId)) notifyFirstContentfulPaint(source);
+            }
             @Override public void onCrash(GeckoSession ignored) {
-                tab.title = "La pestaña falló";
-                tab.loading = false;
-                notifyObservers();
+                recoverCrashedTab(tab);
             }
         });
 
@@ -294,6 +347,7 @@ public final class BrowserRepository {
                     Boolean hasUserGesture) {
                 if (url != null) {
                     tab.url = url;
+                    if (!"about:blank".equals(url)) tab.showStartPage = false;
                     recordRecentUrl(url);
                 }
                 persistAndNotify();
@@ -311,19 +365,23 @@ public final class BrowserRepository {
                 persistAndNotify();
                 return GeckoResult.fromValue(newTab.session);
             }
-            @Override public GeckoResult<String> onLoadError(GeckoSession ignored, String uri, WebRequestError error) {
+            @Override public GeckoResult<String> onLoadError(
+                    GeckoSession ignored, String uri, WebRequestError error) {
                 tab.title = "No se pudo cargar";
+                tab.loading = false;
                 notifyObservers();
                 return null;
             }
         });
 
         session.setProgressDelegate(new GeckoSession.ProgressDelegate() {
-            @Override public void onPageStart(GeckoSession ignored, String url) {
+            @Override public void onPageStart(GeckoSession source, String url) {
                 tab.navigationSerial++;
                 tab.loading = true;
                 tab.progress = 5;
                 tab.url = url;
+                tab.showStartPage = url == null || "about:blank".equals(url);
+                tab.hasValidPaint = tab.showStartPage;
                 notifyObservers();
             }
             @Override public void onProgressChange(GeckoSession ignored, int progress) {
@@ -359,7 +417,41 @@ public final class BrowserRepository {
         });
 
         session.open(ZenGeckoApplication.runtime(context));
+        session.setActive(appForeground && tab.id.equals(activeTabId));
         if (loadIfNew) session.loadUri(tab.url == null ? "about:blank" : tab.url);
+    }
+
+    private void applySessionSettings(BrowserTab tab) {
+        if (tab == null || tab.session == null) return;
+        GeckoSessionSettings settings = tab.session.getSettings();
+        settings.setAllowJavascript(ZenPanelController.javaScriptEnabled(context));
+        settings.setSuspendMediaWhenInactive(true);
+        settings.setUserAgentMode(tab.desktopMode
+                ? GeckoSessionSettings.USER_AGENT_MODE_DESKTOP
+                : GeckoSessionSettings.USER_AGENT_MODE_MOBILE);
+        settings.setViewportMode(tab.desktopMode
+                ? GeckoSessionSettings.VIEWPORT_MODE_DESKTOP
+                : GeckoSessionSettings.VIEWPORT_MODE_MOBILE);
+    }
+
+    private void updateSessionActivity() {
+        for (BrowserTab item : tabs) {
+            if (item.session == null || !item.session.isOpen()) continue;
+            try {
+                item.session.setActive(appForeground && item.id.equals(activeTabId));
+            } catch (RuntimeException ignored) { }
+        }
+    }
+
+    private void recoverCrashedTab(BrowserTab tab) {
+        if (tab == null) return;
+        tab.title = "Recuperando pestaña…";
+        tab.loading = true;
+        tab.hasValidPaint = false;
+        tab.session = null;
+        ensureSession(tab, true);
+        updateSessionActivity();
+        notifyObservers();
     }
 
 
@@ -443,6 +535,9 @@ public final class BrowserRepository {
                                 item.optString("url", "about:blank"));
                         tab.pinned = item.optBoolean("pinned", false);
                         tab.essential = item.optBoolean("essential", false);
+                        tab.desktopMode = item.optBoolean("desktopMode", false);
+                        tab.showStartPage = "about:blank".equals(tab.url);
+                        tab.hasValidPaint = tab.showStartPage;
                         tabs.add(tab);
                     }
                 }
@@ -493,6 +588,7 @@ public final class BrowserRepository {
         }
         activeTabId = active.id;
         ensureSession(active, true);
+        updateSessionActivity();
         persist();
     }
 
@@ -512,7 +608,8 @@ public final class BrowserRepository {
                 savedTabs.put(new JSONObject()
                         .put("id", tab.id).put("workspaceId", tab.workspaceId)
                         .put("title", tab.title).put("url", tab.url)
-                        .put("pinned", tab.pinned).put("essential", tab.essential));
+                        .put("pinned", tab.pinned).put("essential", tab.essential)
+                        .put("desktopMode", tab.desktopMode));
             }
             JSONArray recent = new JSONArray();
             for (String url : recentUrls) recent.put(url);
@@ -531,6 +628,21 @@ public final class BrowserRepository {
     private void notifyPageFinished(GeckoSession session, boolean success) {
         List<Observer> copy = new ArrayList<>(observers);
         for (Observer observer : copy) observer.onPageFinished(session, success);
+    }
+
+    private void notifyPaintStatusReset(GeckoSession session) {
+        List<Observer> copy = new ArrayList<>(observers);
+        for (Observer observer : copy) observer.onPaintStatusReset(session);
+    }
+
+    private void notifyFirstComposite(GeckoSession session) {
+        List<Observer> copy = new ArrayList<>(observers);
+        for (Observer observer : copy) observer.onFirstComposite(session);
+    }
+
+    private void notifyFirstContentfulPaint(GeckoSession session) {
+        List<Observer> copy = new ArrayList<>(observers);
+        for (Observer observer : copy) observer.onFirstContentfulPaint(session);
     }
 
     private void notifyDownload(WebResponse response) {
