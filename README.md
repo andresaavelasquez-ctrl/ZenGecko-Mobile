@@ -175,3 +175,9 @@ app/build/outputs/apk/debug/app-debug.apk
 ## Licencias
 
 El código original del proyecto se entrega bajo MPL-2.0. GeckoView y AndroidX conservan sus licencias. Las marcas e iconos de terceros pertenecen a sus propietarios.
+
+## Hotfix de compilación v0.1.13
+
+- Restaura `installSafeAreaInsets()` en `MainActivity`.
+- Corrige el error `cannot find symbol` durante `compileDebugJavaWithJavac`.
+- Mantiene los márgenes seguros para recortes de pantalla y modo inmersivo.

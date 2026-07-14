@@ -524,6 +524,59 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         }
     }
 
+
+    private void installSafeAreaInsets() {
+        if (appRoot == null) return;
+        appRoot.setOnApplyWindowInsetsListener((view, windowInsets) -> {
+            int left = 0;
+            int top = 0;
+            int right = 0;
+            int bottom = 0;
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Insets cutout = windowInsets.getInsets(
+                        WindowInsets.Type.displayCutout());
+                left = cutout.left;
+                top = cutout.top;
+                right = cutout.right;
+                bottom = cutout.bottom;
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                DisplayCutout cutout = windowInsets.getDisplayCutout();
+                if (cutout != null) {
+                    left = cutout.getSafeInsetLeft();
+                    top = cutout.getSafeInsetTop();
+                    right = cutout.getSafeInsetRight();
+                    bottom = cutout.getSafeInsetBottom();
+                }
+            }
+
+            boolean changed = left != safeInsetLeft
+                    || top != safeInsetTop
+                    || right != safeInsetRight
+                    || bottom != safeInsetBottom;
+
+            safeInsetLeft = left;
+            safeInsetTop = top;
+            safeInsetRight = right;
+            safeInsetBottom = bottom;
+
+            if (root != null) {
+                if (contentFullScreen) {
+                    root.setPadding(0, 0, 0, 0);
+                } else {
+                    root.setPadding(left, top, right, bottom);
+                }
+            }
+
+            if (changed) {
+                dismissSearchPopupImmediate();
+                dismissSidebarPopupImmediate();
+            }
+            return windowInsets;
+        });
+        appRoot.requestApplyInsets();
+    }
+
     private void applyResponsiveLayout(Configuration configuration) {
         if (root == null) return;
         wideLayout = shouldUseFixedSidebar(configuration);

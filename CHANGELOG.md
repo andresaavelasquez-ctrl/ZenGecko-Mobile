@@ -159,3 +159,8 @@
 - Suaviza la velocidad mostrada para evitar saltos bruscos.
 - Reduce altura de pestañas y accesos rápidos.
 - Artefacto: `ZenBrowser-v0.1.13-debug`.
+
+## 0.1.13 hotfix — Safe Area
+
+- Restaura el método `installSafeAreaInsets()` eliminado accidentalmente.
+- Corrige la compilación de `MainActivity`.
