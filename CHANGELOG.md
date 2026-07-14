@@ -106,3 +106,17 @@
 - Corrección de superficies negras de GeckoView.
 - Nombre e icono actualizados a Zen Browser.
 - Motor de búsqueda desplegable y más de veinte configuraciones reales.
+
+## 0.1.11 — Zen Home & Mechanical Key
+
+- Corrige los métodos faltantes `createSidebarShortcutGrid()` y `sidebarBottomAction()`.
+- Conserva Favoritos, Historial, Descargas, perfiles y espacios de v0.1.10.
+- Nuevo fondo bonsái en la pantalla de inicio.
+- Fondo adaptable a vertical y horizontal.
+- Tecla Z con volumen, bisel, desplazamiento y animación física.
+- Clic mecánico corto mediante SoundPool.
+- Respuesta háptica respetando la configuración de Android.
+- Animación de despertar una vez por sesión.
+- Movimiento ambiental lento y configurable.
+- Cuatro ajustes nuevos para fondo, movimiento, sonido y vibración.
+- Artefacto: `ZenBrowser-v0.1.11-debug`.

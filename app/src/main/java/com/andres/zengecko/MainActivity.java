@@ -10,6 +10,9 @@ import android.graphics.Color;
 import android.graphics.Insets;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
+import android.media.AudioAttributes;
+import android.media.AudioManager;
+import android.media.SoundPool;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -22,6 +25,7 @@ import android.text.TextWatcher;
 import android.util.Log;
 import android.view.DisplayCutout;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -81,6 +85,13 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private View searchAnimatedPanel;
     private PopupWindow searchEnginePopup;
     private PopupWindow workspacePopup;
+    private SoundPool keySoundPool;
+    private int mechanicalKeySoundId;
+    private boolean mechanicalKeySoundReady;
+    private ImageView homeBackgroundView;
+    private View homeBackgroundScrim;
+    private TextView homeKeyView;
+    private boolean homeWakePlayed;
     private TextView searchEngineButton;
     private TextView addressDisplay;
     private ImageButton backButton;
@@ -111,6 +122,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         Log.i(TAG, "onCreate; widthDp=" + getResources().getConfiguration().screenWidthDp);
         browser = BrowserRepository.get(this);
         browser.addObserver(this);
+        initializeMechanicalKeySound();
         buildUi();
         applySystemBars(true);
 
@@ -146,6 +158,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         dismissSearchPopupImmediate();
         dismissSidebarPopupImmediate();
         ZenPanelController.dismiss();
+        releaseMechanicalKeySound();
         detachGeckoView();
         super.onDestroy();
     }
@@ -197,6 +210,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         Log.i(TAG, "onConfigurationChanged widthDp=" + newConfig.screenWidthDp
                 + " previousWide=" + wideLayout);
         applyResponsiveLayout(newConfig);
+        applyHomePreferences();
         if (appRoot != null) appRoot.requestApplyInsets();
         recoverVisibleSurface();
         render();
@@ -567,37 +581,58 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private View createNewTabSurface() {
+        FrameLayout surface = new FrameLayout(this);
+        surface.setBackgroundColor(getColor(R.color.zen_bg));
+
+        homeBackgroundView = new ImageView(this);
+        homeBackgroundView.setImageResource(R.drawable.zen_home_bonsai);
+        homeBackgroundView.setScaleType(wideLayout
+                ? ImageView.ScaleType.FIT_CENTER
+                : ImageView.ScaleType.CENTER_CROP);
+        homeBackgroundView.setBackgroundColor(getColor(R.color.zen_bg));
+        surface.addView(homeBackgroundView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        homeBackgroundScrim = new View(this);
+        homeBackgroundScrim.setBackgroundResource(R.drawable.bg_home_overlay);
+        surface.addView(homeBackgroundScrim, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
-        scroll.setBackgroundResource(R.drawable.bg_new_tab_gradient);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setClipToPadding(false);
+        scroll.setBackgroundColor(Color.TRANSPARENT);
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setGravity(Gravity.CENTER_HORIZONTAL);
-        page.setPadding(dp(22), dp(34), dp(22), dp(28));
+        page.setPadding(dp(22), dp(32), dp(22), dp(28));
         scroll.addView(page, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
 
-        TextView logo = text("Z", 36, R.color.zen_bg);
-        logo.setTypeface(Typeface.DEFAULT_BOLD);
-        logo.setGravity(Gravity.CENTER);
-        logo.setBackgroundResource(R.drawable.bg_zen_mark);
-        page.addView(logo, new LinearLayout.LayoutParams(dp(70), dp(70)));
+        homeKeyView = createZenKey();
+        page.addView(homeKeyView, new LinearLayout.LayoutParams(dp(78), dp(84)));
 
         TextView title = text("Zen Browser", 23, R.color.zen_text);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        titleParams.setMargins(0, dp(15), 0, dp(3));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        titleParams.setMargins(0, dp(13), 0, dp(3));
         page.addView(title, titleParams);
 
         TextView subtitle = text("Un espacio tranquilo para navegar", 13, R.color.zen_muted);
         subtitle.setGravity(Gravity.CENTER);
         page.addView(subtitle, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView search = text("Buscar o escribir una dirección", 14, R.color.zen_muted);
+        TextView search = text("Buscar o escribir una dirección", 14, R.color.zen_text);
         search.setGravity(Gravity.CENTER_VERTICAL);
         search.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
         search.setCompoundDrawablePadding(dp(9));
@@ -605,24 +640,38 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         search.setBackgroundResource(R.drawable.bg_search_large);
         search.setOnClickListener(v -> showSearchPopup(true));
         LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(50));
-        searchParams.setMargins(0, dp(25), 0, dp(21));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
+        searchParams.setMargins(0, dp(24), 0, dp(20));
         page.addView(search, searchParams);
 
         TextView quickLabel = label("ACCESOS RÁPIDOS");
         quickLabel.setGravity(Gravity.CENTER);
         page.addView(quickLabel, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
         LinearLayout quickRow = new LinearLayout(this);
         quickRow.setGravity(Gravity.CENTER);
         quickRow.setOrientation(LinearLayout.HORIZONTAL);
-        quickRow.addView(quickSite("GitHub", "https://github.com", R.drawable.ic_site_github));
-        quickRow.addView(quickSite("YouTube", "https://youtube.com", R.drawable.ic_site_youtube));
-        quickRow.addView(quickSite("Wikipedia", "https://wikipedia.org", R.drawable.ic_site_wikipedia));
+        quickRow.addView(quickSite(
+                "GitHub", "https://github.com", R.drawable.ic_site_github));
+        quickRow.addView(quickSite(
+                "YouTube", "https://youtube.com", R.drawable.ic_site_youtube));
+        quickRow.addView(quickSite(
+                "Wikipedia", "https://wikipedia.org", R.drawable.ic_site_wikipedia));
         page.addView(quickRow, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        return scroll;
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        surface.addView(scroll, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        surface.post(() -> {
+            applyHomePreferences();
+            runHomeWakeAnimation();
+        });
+        return surface;
     }
 
     private View quickSite(String title, String url, int iconRes) {
@@ -997,6 +1046,122 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         panel.addView(utilities, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(50)));
         return panel;
+    }
+
+    private View createSidebarShortcutGrid() {
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        grid.setPadding(0, dp(7), 0, dp(3));
+
+        LinearLayout first = new LinearLayout(this);
+        first.setGravity(Gravity.CENTER);
+        first.addView(sidebarShortcut(
+                "YouTube", "https://youtube.com", R.drawable.ic_shortcut_youtube),
+                new LinearLayout.LayoutParams(0, dp(72), 1f));
+        first.addView(sidebarShortcut(
+                "Discord", "https://discord.com/app", R.drawable.ic_shortcut_discord),
+                new LinearLayout.LayoutParams(0, dp(72), 1f));
+        first.addView(sidebarShortcut(
+                "X", "https://x.com", R.drawable.ic_shortcut_x),
+                new LinearLayout.LayoutParams(0, dp(72), 1f));
+        first.addView(sidebarShortcut(
+                "Wikipedia", "https://wikipedia.org", R.drawable.ic_shortcut_wikipedia),
+                new LinearLayout.LayoutParams(0, dp(72), 1f));
+        grid.addView(first, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(74)));
+
+        LinearLayout second = new LinearLayout(this);
+        second.setGravity(Gravity.CENTER);
+        second.addView(sidebarShortcut(
+                "Reddit", "https://reddit.com", R.drawable.ic_shortcut_reddit),
+                new LinearLayout.LayoutParams(0, dp(72), 1f));
+        second.addView(sidebarShortcut(
+                "GitHub", "https://github.com", R.drawable.ic_shortcut_github),
+                new LinearLayout.LayoutParams(0, dp(72), 1f));
+        second.addView(sidebarShortcut(
+                "Perplexity", "https://www.perplexity.ai", R.drawable.ic_shortcut_perplexity),
+                new LinearLayout.LayoutParams(0, dp(72), 1f));
+        second.addView(sidebarShortcut(
+                "Añadir", null, R.drawable.ic_add),
+                new LinearLayout.LayoutParams(0, dp(72), 1f));
+        grid.addView(second, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(74)));
+        return grid;
+    }
+
+    private View sidebarShortcut(String title, String url, int iconRes) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER);
+        card.setPadding(dp(3), dp(6), dp(3), dp(4));
+        card.setBackgroundResource(R.drawable.bg_sidebar_shortcut);
+        card.setContentDescription(title);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        if (iconRes == R.drawable.ic_add) {
+            icon.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_muted)));
+        }
+        card.addView(icon, new LinearLayout.LayoutParams(dp(28), dp(28)));
+
+        TextView label = text(title, 9, R.color.zen_muted);
+        label.setGravity(Gravity.CENTER);
+        label.setSingleLine(true);
+        label.setEllipsize(TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        labelParams.setMargins(0, dp(4), 0, 0);
+        card.addView(label, labelParams);
+
+        LinearLayout.LayoutParams outer = new LinearLayout.LayoutParams(
+                0, dp(68), 1f);
+        outer.setMargins(dp(3), dp(2), dp(3), dp(2));
+        card.setLayoutParams(outer);
+
+        card.setOnClickListener(v -> {
+            dismissSidebarPopupImmediate();
+            if (url == null) {
+                openNewTabAndSearch();
+            } else if (ZenPanelController.quickAccessOpensNewTab(this)) {
+                browser.addTab(url, true);
+            } else {
+                browser.loadInActiveTab(url);
+            }
+        });
+        return card;
+    }
+
+    private View sidebarBottomAction(
+            int iconRes,
+            String description,
+            Runnable action) {
+        LinearLayout button = new LinearLayout(this);
+        button.setOrientation(LinearLayout.VERTICAL);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(3), dp(4), dp(3), dp(2));
+        button.setBackgroundResource(R.drawable.bg_button);
+        button.setContentDescription(description);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(iconRes);
+        icon.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_text)));
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        button.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(24)));
+
+        TextView title = text(description, 9, R.color.zen_muted);
+        title.setGravity(Gravity.CENTER);
+        title.setSingleLine(true);
+        button.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        button.setOnClickListener(v -> {
+            dismissSidebarPopupImmediate();
+            if (action != null) action.run();
+        });
+        return button;
     }
 
     private void showWorkspaceMenu(View anchor) {
@@ -1675,8 +1840,187 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 }).start();
     }
 
+    private TextView createZenKey() {
+        TextView key = text("Z", 36, R.color.zen_bg);
+        key.setTypeface(Typeface.DEFAULT_BOLD);
+        key.setGravity(Gravity.CENTER);
+        key.setBackgroundResource(R.drawable.bg_zen_key);
+        key.setElevation(dp(11));
+        key.setClickable(true);
+        key.setFocusable(true);
+        key.setContentDescription("Tecla Z de Zen Browser");
+
+        key.setOnTouchListener((view, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    pressMechanicalKey(view, true);
+                    return false;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    releaseMechanicalKey(view);
+                    return false;
+                default:
+                    return false;
+            }
+        });
+        key.setOnClickListener(v -> { });
+        return key;
+    }
+
+    private void initializeMechanicalKeySound() {
+        try {
+            AudioAttributes attributes = new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build();
+            keySoundPool = new SoundPool.Builder()
+                    .setMaxStreams(2)
+                    .setAudioAttributes(attributes)
+                    .build();
+            keySoundPool.setOnLoadCompleteListener((pool, sampleId, status) -> {
+                if (sampleId == mechanicalKeySoundId) {
+                    mechanicalKeySoundReady = status == 0;
+                }
+            });
+            mechanicalKeySoundId =
+                    keySoundPool.load(this, R.raw.mechanical_key, 1);
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Unable to initialize mechanical key sound", error);
+            releaseMechanicalKeySound();
+        }
+    }
+
+    private void releaseMechanicalKeySound() {
+        mechanicalKeySoundReady = false;
+        mechanicalKeySoundId = 0;
+        if (keySoundPool != null) {
+            try {
+                keySoundPool.release();
+            } catch (RuntimeException ignored) { }
+            keySoundPool = null;
+        }
+    }
+
+    private void playMechanicalKeyFeedback(View key) {
+        if (key == null) return;
+
+        if (ZenPanelController.keyHapticsEnabled(this)) {
+            key.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
+        }
+
+        if (!ZenPanelController.keySoundEnabled(this)
+                || !mechanicalKeySoundReady
+                || keySoundPool == null
+                || mechanicalKeySoundId == 0) {
+            return;
+        }
+
+        AudioManager audioManager =
+                (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (audioManager != null
+                && audioManager.getRingerMode() != AudioManager.RINGER_MODE_NORMAL) {
+            return;
+        }
+
+        try {
+            keySoundPool.play(
+                    mechanicalKeySoundId,
+                    0.34f,
+                    0.34f,
+                    1,
+                    0,
+                    1.0f);
+        } catch (RuntimeException error) {
+            Log.w(TAG, "Unable to play mechanical key sound", error);
+        }
+    }
+
+    private void pressMechanicalKey(View key, boolean feedback) {
+        if (key == null) return;
+        key.setPressed(true);
+        key.animate().cancel();
+        key.animate()
+                .translationY(dp(5))
+                .scaleX(.965f)
+                .scaleY(.935f)
+                .setDuration(58L)
+                .start();
+        if (feedback) playMechanicalKeyFeedback(key);
+    }
+
+    private void releaseMechanicalKey(View key) {
+        if (key == null) return;
+        key.setPressed(false);
+        key.animate().cancel();
+        key.animate()
+                .translationY(0f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(105L)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                .start();
+    }
+
+    private void runHomeWakeAnimation() {
+        if (homeWakePlayed
+                || homeKeyView == null
+                || !ZenPanelController.animationsEnabled(this)) {
+            return;
+        }
+        homeWakePlayed = true;
+        homeKeyView.postDelayed(() -> {
+            pressMechanicalKey(homeKeyView, true);
+            mainHandler.postDelayed(() -> releaseMechanicalKey(homeKeyView), 90L);
+        }, 480L);
+    }
+
+    private void applyHomePreferences() {
+        if (homeBackgroundView == null) return;
+
+        boolean showBackground =
+                ZenPanelController.homeBackgroundEnabled(this);
+        homeBackgroundView.setVisibility(
+                showBackground ? View.VISIBLE : View.GONE);
+        if (homeBackgroundScrim != null) {
+            homeBackgroundScrim.setVisibility(
+                    showBackground ? View.VISIBLE : View.GONE);
+        }
+
+        homeBackgroundView.animate().cancel();
+        homeBackgroundView.setScaleType(wideLayout
+                ? ImageView.ScaleType.FIT_CENTER
+                : ImageView.ScaleType.CENTER_CROP);
+
+        if (!showBackground) {
+            homeBackgroundView.setAlpha(0f);
+            homeBackgroundView.setScaleX(1f);
+            homeBackgroundView.setScaleY(1f);
+            return;
+        }
+
+        boolean motion = ZenPanelController.homeMotionEnabled(this)
+                && ZenPanelController.animationsEnabled(this);
+        if (motion) {
+            homeBackgroundView.setAlpha(0f);
+            homeBackgroundView.setScaleX(1.015f);
+            homeBackgroundView.setScaleY(1.015f);
+            homeBackgroundView.animate()
+                    .alpha(1f)
+                    .scaleX(1.055f)
+                    .scaleY(1.055f)
+                    .setDuration(24000L)
+                    .setInterpolator(new android.view.animation.LinearInterpolator())
+                    .start();
+        } else {
+            homeBackgroundView.setAlpha(1f);
+            homeBackgroundView.setScaleX(1f);
+            homeBackgroundView.setScaleY(1f);
+        }
+    }
+
     void applySettingsNow() {
         applyRuntimePreferences();
+        applyHomePreferences();
         render();
         if (sidebarPopup != null && sidebarPopup.isShowing()) refreshSidebarPopup();
     }

@@ -60,6 +60,10 @@ public final class ZenPanelController {
     public static final String KEY_PAGE_RECOVERY = "page_recovery";
     public static final String KEY_ECO_RENDER = "eco_render";
     public static final String KEY_HOME_URL = "home_url";
+    public static final String KEY_HOME_BACKGROUND = "home_background";
+    public static final String KEY_HOME_MOTION = "home_motion";
+    public static final String KEY_KEY_SOUND = "mechanical_key_sound";
+    public static final String KEY_KEY_HAPTICS = "mechanical_key_haptics";
 
     private static final String PREFS_PROFILES = "zen_profiles";
     private static final String KEY_ACTIVE_PROFILE = "active_profile";
@@ -163,6 +167,22 @@ public final class ZenPanelController {
         return value == null || value.trim().isEmpty() ? "about:blank" : value.trim();
     }
 
+    public static boolean homeBackgroundEnabled(Context context) {
+        return ui(context).getBoolean(KEY_HOME_BACKGROUND, true);
+    }
+
+    public static boolean homeMotionEnabled(Context context) {
+        return ui(context).getBoolean(KEY_HOME_MOTION, true);
+    }
+
+    public static boolean keySoundEnabled(Context context) {
+        return ui(context).getBoolean(KEY_KEY_SOUND, true);
+    }
+
+    public static boolean keyHapticsEnabled(Context context) {
+        return ui(context).getBoolean(KEY_KEY_HAPTICS, true);
+    }
+
     public static String activeProfile(Context context) {
         return context.getSharedPreferences(PREFS_PROFILES, Context.MODE_PRIVATE)
                 .getString(KEY_ACTIVE_PROFILE, "Personal");
@@ -214,6 +234,30 @@ public final class ZenPanelController {
                 "Los accesos no reemplazan la página que estés usando.",
                 KEY_QUICK_NEW_TAB,
                 false,
+                preferences));
+        content.addView(toggle(activity,
+                "Fondo bonsái en Inicio",
+                "Usa la imagen zen como fondo de las pestañas nuevas.",
+                KEY_HOME_BACKGROUND,
+                true,
+                preferences));
+        content.addView(toggle(activity,
+                "Movimiento ambiental del fondo",
+                "Aplica un acercamiento muy lento y discreto.",
+                KEY_HOME_MOTION,
+                true,
+                preferences));
+        content.addView(toggle(activity,
+                "Sonido de tecla mecánica",
+                "La tecla Z reproduce un clic corto respetando el modo silencioso.",
+                KEY_KEY_SOUND,
+                true,
+                preferences));
+        content.addView(toggle(activity,
+                "Respuesta háptica de la tecla",
+                "Añade una vibración ligera al presionar la Z.",
+                KEY_KEY_HAPTICS,
+                true,
                 preferences));
         content.addView(toggle(activity,
                 "Deslizar para cerrar pestañas",
