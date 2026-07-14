@@ -46,3 +46,15 @@
 - DuckDuckGo continúa como motor predeterminado.
 - Cobertura hasta la primera pintura de GeckoView para evitar páginas grises.
 - Protección de seguridad para que la capa de transición nunca quede bloqueada.
+
+## 0.1.6 — Compact Zen
+
+- Barra vertical compacta permanente en horizontal y tabletas.
+- Panel expandido desde el borde en teléfonos verticales.
+- Gesto desde el borde izquierdo para abrir la navegación.
+- Esenciales convertidas en cuadrícula visual.
+- Espacios integrados en la barra compacta.
+- Buscador incorporado dentro del panel lateral.
+- Contenido web sobre un fondo ambiental con márgenes.
+- Barra superior reducida en modo compacto.
+- Sin barra inferior y sin recrear GeckoView al expandir el panel.
