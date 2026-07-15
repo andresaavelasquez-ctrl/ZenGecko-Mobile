@@ -94,6 +94,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private FrameLayout webHost;
     private GeckoView geckoView;
     private View newTabSurface;
+    private View settingsSurface;
     private FrameLayout paintGuard;
     private TextView paintGuardStatus;
     private View transitionScrim;
@@ -274,6 +275,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         Log.i(TAG, "onPause phase=" + renderPhase);
         activityResumed = false;
         cancelSurfaceProbe();
+        dismissContextMenuImmediate();
         if (browser != null) browser.setAppForeground(false);
         super.onPause();
     }
@@ -641,6 +643,13 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         transitionScrim.setClickable(false);
         webHost.addView(transitionScrim, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        settingsSurface = NativeSettingsPage.create(
+                this, browser, this::applySettingsNow);
+        settingsSurface.setVisibility(View.GONE);
+        webHost.addView(settingsSurface, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
 
         installEdgeGestureHandle();
         setContentView(appRoot);
@@ -1315,7 +1324,15 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         search.setCompoundDrawablePadding(dp(9));
         search.setPadding(dp(16), 0, dp(16), 0);
         search.setBackgroundResource(R.drawable.bg_search_large);
-        search.setOnClickListener(v -> showSearchPopup(true));
+        search.setClickable(true);
+        search.setFocusable(true);
+        search.setOnClickListener(v -> openHomeSearch());
+        search.setOnTouchListener((view, event) -> {
+            if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                view.performClick();
+            }
+            return true;
+        });
         LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
         searchParams.setMargins(0, dp(20), 0, dp(16));
@@ -1349,6 +1366,18 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             runHomeWakeAnimation();
         });
         return surface;
+    }
+
+    private void openHomeSearch() {
+        if (!isActivityUsable()
+                || searchPopup != null && searchPopup.isShowing()) return;
+        showSearchPopup(true);
+        mainHandler.postDelayed(() -> {
+            if (searchInput != null && searchPopup != null
+                    && searchPopup.isShowing()) {
+                showKeyboard(searchInput);
+            }
+        }, 90L);
     }
 
     private View quickSite(String title, String url, int iconRes) {
@@ -1563,7 +1592,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private View createSidebar() {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(10), dp(8), dp(10), dp(8));
+        panel.setPadding(dp(10), dp(9), dp(10), dp(9));
         panel.setBackgroundResource(R.drawable.bg_sidebar_panel);
 
         LinearLayout brand = new LinearLayout(this);
@@ -1591,20 +1620,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
 
         LinearLayout navigation = new LinearLayout(this);
-        navigation.setGravity(Gravity.CENTER_VERTICAL);
-
-        ImageButton settings = iconButton(R.drawable.ic_settings, "Configuración");
-        settings.setOnClickListener(v -> {
-            dismissSidebarPopupImmediate();
-            ZenPanelController.showSettings(this, browser, this::showSidebarPopup);
-        });
-        navigation.addView(settings, square(38));
-
-        View divider = new View(this);
-        divider.setBackgroundColor(getColor(R.color.zen_border));
-        LinearLayout.LayoutParams dividerParams = new LinearLayout.LayoutParams(dp(1), dp(24));
-        dividerParams.setMargins(dp(4), 0, dp(4), 0);
-        navigation.addView(divider, dividerParams);
+        navigation.setGravity(Gravity.CENTER);
+        navigation.setPadding(dp(4), dp(2), dp(4), dp(2));
 
         ImageButton home = iconButton(R.drawable.ic_home, "Inicio");
         home.setOnClickListener(v -> {
@@ -1637,40 +1654,14 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         });
         navigation.addView(sideReload, square(38));
         panel.addView(navigation, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(40)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
 
         panel.addView(createSidebarShortcutGrid());
+        panel.addView(createSidebarSecondaryActions());
 
-        LinearLayout workspace = new LinearLayout(this);
-        workspace.setGravity(Gravity.CENTER_VERTICAL);
-        workspace.setPadding(dp(10), 0, dp(8), 0);
-        workspace.setBackgroundResource(R.drawable.bg_profile_selector);
-        ImageView workspaceIcon = new ImageView(this);
-        workspaceIcon.setImageResource(workspaceIconRes(browser.getActiveWorkspaceId()));
-        workspaceIcon.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_text)));
-        workspace.addView(workspaceIcon, new LinearLayout.LayoutParams(dp(24), dp(24)));
-
-        TextView workspaceName = text(
-                browser.getActiveWorkspaceName(), 14, R.color.zen_text);
-        workspaceName.setGravity(Gravity.CENTER);
-        workspaceName.setTypeface(Typeface.DEFAULT_BOLD);
-        LinearLayout.LayoutParams workspaceNameParams =
-                new LinearLayout.LayoutParams(0, dp(42), 1f);
-        workspaceNameParams.setMargins(dp(6), 0, dp(6), 0);
-        workspace.addView(workspaceName, workspaceNameParams);
-
-        ImageView workspaceArrow = new ImageView(this);
-        workspaceArrow.setImageResource(R.drawable.ic_chevron_down);
-        workspaceArrow.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_muted)));
-        workspace.addView(workspaceArrow, new LinearLayout.LayoutParams(dp(24), dp(24)));
-
-        workspace.setOnClickListener(v -> showWorkspaceMenu(workspace));
-        LinearLayout.LayoutParams workspaceParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
-        workspaceParams.setMargins(0, dp(5), 0, dp(3));
-        panel.addView(workspace, workspaceParams);
-
-        TextView openLabel = label("PESTAÑAS ABIERTAS");
+        TextView openLabel = label(
+                browser.getActiveWorkspaceName().toUpperCase(Locale.ROOT)
+                        + "  ·  PESTAÑAS ABIERTAS");
         panel.addView(openLabel);
 
         ScrollView tabsScroll = new ScrollView(this);
@@ -1696,35 +1687,102 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         panel.addView(tabsScroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        LinearLayout utilities = new LinearLayout(this);
-        utilities.setGravity(Gravity.CENTER);
-        utilities.addView(sidebarBottomAction(
+        View dock = createSidebarDock();
+        LinearLayout.LayoutParams dockParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(54));
+        dockParams.setMargins(0, dp(6), 0, 0);
+        panel.addView(dock, dockParams);
+        return panel;
+    }
+
+    private View createSidebarSecondaryActions() {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER);
+        row.setPadding(0, dp(3), 0, dp(3));
+        row.addView(sidebarBottomAction(
                 R.drawable.ic_star,
                 "Favoritos",
                 () -> ZenPanelController.showFavorites(
                         this, browser, this::showSidebarPopup)),
-                new LinearLayout.LayoutParams(0, dp(46), 1f));
-        utilities.addView(sidebarBottomAction(
-                R.drawable.ic_downloads,
-                "Descargas",
-                () -> ZenPanelController.showDownloads(
-                        this, browser, this::showSidebarPopup)),
-                new LinearLayout.LayoutParams(0, dp(46), 1f));
-        utilities.addView(sidebarBottomAction(
+                new LinearLayout.LayoutParams(0, dp(44), 1f));
+        row.addView(sidebarBottomAction(
                 R.drawable.ic_history,
                 "Historial",
                 () -> ZenPanelController.showHistory(
                         this, browser, this::showSidebarPopup)),
-                new LinearLayout.LayoutParams(0, dp(46), 1f));
-        utilities.addView(sidebarBottomAction(
+                new LinearLayout.LayoutParams(0, dp(44), 1f));
+        row.addView(sidebarBottomAction(
                 R.drawable.ic_profile,
                 "Perfil",
                 () -> ZenPanelController.showProfiles(
                         this, this::showSidebarPopup)),
-                new LinearLayout.LayoutParams(0, dp(46), 1f));
-        panel.addView(utilities, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
-        return panel;
+                new LinearLayout.LayoutParams(0, dp(44), 1f));
+        return row;
+    }
+
+    private View createSidebarDock() {
+        LinearLayout dock = new LinearLayout(this);
+        dock.setGravity(Gravity.CENTER_VERTICAL);
+        dock.setPadding(dp(5), dp(4), dp(5), dp(4));
+        dock.setBackgroundResource(R.drawable.bg_sidebar_dock);
+
+        ImageButton settings = iconButton(R.drawable.ic_settings, "Configuración");
+        settings.setBackgroundResource(R.drawable.bg_workspace_idle);
+        settings.setPadding(dp(9), dp(9), dp(9), dp(9));
+        settings.setOnClickListener(v -> openSettingsTabFromSidebar());
+        dock.addView(settings, new LinearLayout.LayoutParams(dp(44), dp(44)));
+
+        LinearLayout spaces = new LinearLayout(this);
+        spaces.setGravity(Gravity.CENTER);
+        spaces.setPadding(dp(2), dp(2), dp(2), dp(2));
+        spaces.setBackgroundResource(R.drawable.bg_profile_selector);
+        spaces.addView(createWorkspaceSegmentButton(
+                "personal", "Personal"), new LinearLayout.LayoutParams(0, dp(40), 1f));
+        spaces.addView(createWorkspaceSegmentButton(
+                "work", "Trabajo"), new LinearLayout.LayoutParams(0, dp(40), 1f));
+        spaces.addView(createWorkspaceSegmentButton(
+                "education", "Estudio"), new LinearLayout.LayoutParams(0, dp(40), 1f));
+        LinearLayout.LayoutParams spacesParams =
+                new LinearLayout.LayoutParams(0, dp(44), 1f);
+        spacesParams.setMargins(dp(7), 0, dp(7), 0);
+        dock.addView(spaces, spacesParams);
+
+        ImageButton downloads = iconButton(R.drawable.ic_downloads, "Descargas");
+        downloads.setBackgroundResource(R.drawable.bg_workspace_idle);
+        downloads.setPadding(dp(9), dp(9), dp(9), dp(9));
+        downloads.setOnClickListener(v -> {
+            dismissSidebarPopupImmediate();
+            ZenPanelController.showDownloads(
+                    this, browser, this::showSidebarPopup);
+        });
+        dock.addView(downloads, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        return dock;
+    }
+
+    private View createWorkspaceSegmentButton(String workspaceId, String description) {
+        boolean active = workspaceId.equals(browser.getActiveWorkspaceId());
+        ImageButton button = iconButton(workspaceIconRes(workspaceId), description);
+        button.setImageTintList(ColorStateList.valueOf(getColor(
+                active ? R.color.zen_text : R.color.zen_muted)));
+        button.setBackgroundResource(
+                active ? R.drawable.bg_workspace_active : R.drawable.bg_workspace_idle);
+        button.setPadding(dp(9), dp(9), dp(9), dp(9));
+        button.setOnClickListener(v -> {
+            if (workspaceId.equals(browser.getActiveWorkspaceId())) return;
+            v.setEnabled(false);
+            switchWorkspaceWithSlide(workspaceId);
+            mainHandler.postDelayed(() -> {
+                if (v.isAttachedToWindow()) v.setEnabled(true);
+            }, 360L);
+        });
+        return button;
+    }
+
+    private void openSettingsTabFromSidebar() {
+        dismissSidebarPopupImmediate();
+        dismissContextMenuImmediate();
+        browser.openSettingsTab();
+        render();
     }
 
     private View createSidebarShortcutGrid() {
@@ -2404,7 +2462,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         int availableWidth = Math.max(dp(240),
                 getResources().getDisplayMetrics().widthPixels - safeInsetLeft - safeInsetRight);
-        int panelWidth = Math.min(dp(410), (int) (availableWidth * .94f));
+        int panelWidth = Math.min(dp(390), (int) (availableWidth * .90f));
         int measuredHeight = appRoot == null ? 0 : appRoot.getHeight();
         int availableHeight = measuredHeight - safeInsetTop - safeInsetBottom;
         int height = availableHeight > 0 ? availableHeight : ViewGroup.LayoutParams.MATCH_PARENT;
@@ -2451,6 +2509,9 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         sidebarAnimatedPanel = sidebarPanelHost;
         FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
                 panelWidth, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START);
+        panelParams.leftMargin = dp(8);
+        panelParams.topMargin = dp(8);
+        panelParams.bottomMargin = dp(8);
         sidebarPanelHost.addView(createSidebar(), new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         overlay.addView(sidebarPanelHost, panelParams);
@@ -3501,6 +3562,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         header.addView(labels, labelParams);
         panel.addView(header);
 
+        boolean remoteSource = isRemoteHttpUrl(source);
+        boolean downloadableSource = !source.isEmpty()
+                && DownloadStore.validationMessage(source).isEmpty();
+
         if (image && !source.isEmpty()) {
             panel.addView(contextAction(
                     R.drawable.ic_open_new,
@@ -3509,27 +3574,33 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                         dismissContextMenuImmediate();
                         animateWebTransition(() -> browser.addTab(source, true));
                     }));
-            panel.addView(contextAction(
-                    R.drawable.ic_preview,
-                    "Vista previa",
-                    () -> showMediaPreview(source, heading)));
-            panel.addView(contextAction(
-                    R.drawable.ic_downloads,
-                    "Descargar imagen",
-                    () -> enqueueContextDownload(
-                            source, base, heading, "image/*")));
+            if (remoteSource) {
+                panel.addView(contextAction(
+                        R.drawable.ic_preview,
+                        "Vista previa",
+                        () -> showMediaPreview(source, heading)));
+            }
+            if (downloadableSource) {
+                panel.addView(contextAction(
+                        R.drawable.ic_downloads,
+                        "Descargar imagen",
+                        () -> enqueueContextDownload(
+                                source, base, heading, "image/*")));
+            }
             panel.addView(contextAction(
                     R.drawable.ic_copy,
                     "Copiar dirección de imagen",
                     () -> copyText("Dirección de imagen", source)));
-            panel.addView(contextAction(
-                    R.drawable.ic_share,
-                    "Compartir imagen",
-                    () -> fetchContextMedia(source, base, false)));
-            panel.addView(contextAction(
-                    R.drawable.ic_copy,
-                    "Copiar imagen",
-                    () -> fetchContextMedia(source, base, true)));
+            if (remoteSource) {
+                panel.addView(contextAction(
+                        R.drawable.ic_share,
+                        "Compartir imagen",
+                        () -> fetchContextMedia(source, base, false)));
+                panel.addView(contextAction(
+                        R.drawable.ic_copy,
+                        "Copiar imagen",
+                        () -> fetchContextMedia(source, base, true)));
+            }
         } else if (media && !source.isEmpty()) {
             panel.addView(contextAction(
                     R.drawable.ic_open_new,
@@ -3538,11 +3609,13 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                         dismissContextMenuImmediate();
                         animateWebTransition(() -> browser.addTab(source, true));
                     }));
-            panel.addView(contextAction(
-                    R.drawable.ic_downloads,
-                    video ? "Descargar video" : "Descargar audio",
-                    () -> enqueueContextDownload(
-                            source, base, heading, video ? "video/*" : "audio/*")));
+            if (downloadableSource) {
+                panel.addView(contextAction(
+                        R.drawable.ic_downloads,
+                        video ? "Descargar video" : "Descargar audio",
+                        () -> enqueueContextDownload(
+                                source, base, heading, video ? "video/*" : "audio/*")));
+            }
             panel.addView(contextAction(
                     R.drawable.ic_copy,
                     "Copiar dirección",
@@ -3633,37 +3706,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     .setInterpolator(new android.view.animation.DecelerateInterpolator())
                     .start();
 
-            if (image && isRemoteHttpUrl(source)) {
-                mainHandler.postDelayed(() -> {
-                    if (!isActivityUsable()
-                            || generation != contextGeneration
-                            || contextMenuDialog != dialog
-                            || !dialog.isShowing()
-                            || !preview.isAttachedToWindow()) {
-                        return;
-                    }
-                    preview.setImageTintList(null);
-                    try {
-                        RemoteAssetLoader.loadInto(
-                                MainActivity.this,
-                                source,
-                                96,
-                                preview,
-                                new RemoteAssetLoader.Callback() {
-                                    @Override public void onLoaded(Bitmap bitmap) { }
-
-                                    @Override public void onError(Throwable error) {
-                                        if (!preview.isAttachedToWindow()) return;
-                                        preview.setImageResource(R.drawable.ic_preview);
-                                        preview.setImageTintList(ColorStateList.valueOf(
-                                                getColor(R.color.zen_accent)));
-                                    }
-                                });
-                    } catch (Throwable error) {
-                        Log.w(TAG, "Context thumbnail unavailable", error);
-                    }
-                }, 120L);
-            }
+            // La miniatura se carga únicamente al solicitar Vista previa.
         } catch (RuntimeException error) {
             Log.e(TAG, "Context dialog show failed", error);
             contextMenuDialog = null;
@@ -3828,35 +3871,52 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     private void fetchContextMedia(String url, String referrer, boolean copy) {
         dismissContextMenuImmediate();
+        if (!isActivityUsable() || !isRemoteHttpUrl(url)) {
+            Toast.makeText(
+                    this,
+                    "Este recurso no se puede preparar de forma segura",
+                    Toast.LENGTH_SHORT).show();
+            return;
+        }
         Toast.makeText(
                 this,
                 copy ? "Preparando imagen para copiar…" : "Preparando imagen para compartir…",
                 Toast.LENGTH_SHORT).show();
         ContextMediaStore.fetch(this, url, referrer, new ContextMediaStore.Callback() {
             @Override public void onReady(File file, String mime) {
-                try {
-                    if (copy) {
-                        ContextMediaStore.copy(MainActivity.this, file, mime);
-                        Toast.makeText(
-                                MainActivity.this,
-                                "Imagen copiada",
-                                Toast.LENGTH_SHORT).show();
-                    } else {
-                        ContextMediaStore.share(MainActivity.this, file, mime);
+                runOnUiThread(() -> {
+                    if (!isActivityUsable() || !activityResumed) return;
+                    try {
+                        if (copy) {
+                            ContextMediaStore.copy(MainActivity.this, file, mime);
+                            Toast.makeText(
+                                    MainActivity.this,
+                                    "Imagen copiada",
+                                    Toast.LENGTH_SHORT).show();
+                        } else {
+                            ContextMediaStore.share(MainActivity.this, file, mime);
+                        }
+                    } catch (Throwable error) {
+                        Log.e(TAG, "Context media action failed", error);
+                        if (isActivityUsable()) {
+                            Toast.makeText(
+                                    MainActivity.this,
+                                    "No se pudo completar la acción",
+                                    Toast.LENGTH_SHORT).show();
+                        }
                     }
-                } catch (RuntimeException error) {
-                    Toast.makeText(
-                            MainActivity.this,
-                            "No se pudo completar la acción",
-                            Toast.LENGTH_SHORT).show();
-                }
+                });
             }
 
             @Override public void onError(Throwable error) {
-                Toast.makeText(
-                        MainActivity.this,
-                        "No se pudo obtener la imagen",
-                        Toast.LENGTH_SHORT).show();
+                runOnUiThread(() -> {
+                    if (!isActivityUsable() || !activityResumed) return;
+                    Log.w(TAG, "Context media fetch failed", error);
+                    Toast.makeText(
+                            MainActivity.this,
+                            "No se pudo obtener la imagen",
+                            Toast.LENGTH_SHORT).show();
+                });
             }
         });
     }
@@ -4194,40 +4254,80 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         try {
             BrowserTab tab = browser.getActiveTab();
             if (tab == null) return;
-            if (tab.loading && contextMenuDialog != null) dismissContextMenuImmediate();
-            boolean sessionChanged = displayedSession != tab.session;
-            attachSession(tab.session);
-            if (sessionChanged && !tab.showStartPage && activityResumed) {
-                scheduleSurfaceProbe(tab.session, 180L, tab.hasValidPaint,
-                        "render-session-change");
+            boolean settingsTab = browser.isSettingsTab(tab);
+
+            if (settingsTab) {
+                cancelSurfaceProbe();
+                dismissContextMenuImmediate();
+                clearTransitionSnapshot();
+                tabTransitionRunning = false;
+                cancelPaintGuardTimeout();
+                stopAddressGlow();
+
+                newTabSurface.setVisibility(View.GONE);
+                settingsSurface.setVisibility(View.VISIBLE);
+                settingsSurface.bringToFront();
+                if (paintGuard != null) {
+                    paintGuard.animate().cancel();
+                    paintGuard.setVisibility(View.GONE);
+                    paintGuard.setAlpha(0f);
+                }
+                if (transitionScrim != null) transitionScrim.setVisibility(View.GONE);
+
+                if (addressDisplay != null) {
+                    addressDisplay.setVisibility(View.VISIBLE);
+                    addressDisplay.setText("Configuración");
+                    addressDisplay.setContentDescription("Configuración de Zen Browser");
+                }
+                setEnabled(backButton, false);
+                setEnabled(forwardButton, false);
+                reloadButton.setImageResource(R.drawable.ic_reload);
+                reloadButton.setContentDescription("No disponible en Configuración");
+                setEnabled(reloadButton, false);
+                updateProgressBar(tab);
+            } else {
+                settingsSurface.setVisibility(View.GONE);
+                setEnabled(reloadButton, true);
+                if (tab.loading && contextMenuDialog != null) dismissContextMenuImmediate();
+                boolean sessionChanged = displayedSession != tab.session;
+                attachSession(tab.session);
+                if (sessionChanged && !tab.showStartPage && activityResumed) {
+                    scheduleSurfaceProbe(tab.session, 180L, tab.hasValidPaint,
+                            "render-session-change");
+                }
+                String paintCoverKey = tab.id + ":" + tab.navigationSerial;
+                boolean newTab = tab.showStartPage;
+                newTabSurface.setVisibility(newTab ? View.VISIBLE : View.GONE);
+                if (newTab) {
+                    hidePaintGuard(tab.session, true);
+                    lastPaintCoverKey = "";
+                } else if (!tab.hasValidPaint
+                        && (sessionChanged || tab.loading
+                        || !paintCoverKey.equals(lastPaintCoverKey))) {
+                    showPaintGuard(tab.session, "Cargando página…");
+                    lastPaintCoverKey = paintCoverKey;
+                } else if (tab.hasValidPaint && paintGuard != null
+                        && paintGuard.getVisibility() == View.VISIBLE) {
+                    hidePaintGuard(tab.session, false);
+                }
+                if (addressDisplay != null) {
+                    boolean showAddress = !newTab
+                            && ZenPanelController.showAddressBar(this);
+                    addressDisplay.setVisibility(showAddress ? View.VISIBLE : View.GONE);
+                    addressDisplay.setText(
+                            showAddress ? displayHost(tab.url) : "Nueva pestaña");
+                    addressDisplay.setContentDescription(showAddress
+                            ? "Dirección actual: " + tab.url
+                            : "Buscar o escribir una dirección");
+                }
+                setEnabled(backButton, tab.canGoBack);
+                setEnabled(forwardButton, tab.canGoForward);
+                reloadButton.setImageResource(
+                        tab.loading ? R.drawable.ic_stop : R.drawable.ic_reload);
+                reloadButton.setContentDescription(
+                        tab.loading ? "Detener" : "Recargar");
+                updateProgressBar(tab);
             }
-            String paintCoverKey = tab.id + ":" + tab.navigationSerial;
-            boolean newTab = tab.showStartPage;
-            newTabSurface.setVisibility(newTab ? View.VISIBLE : View.GONE);
-            if (newTab) {
-                hidePaintGuard(tab.session, true);
-                lastPaintCoverKey = "";
-            } else if (!tab.hasValidPaint
-                    && (sessionChanged || tab.loading || !paintCoverKey.equals(lastPaintCoverKey))) {
-                showPaintGuard(tab.session, "Cargando página…");
-                lastPaintCoverKey = paintCoverKey;
-            } else if (tab.hasValidPaint && paintGuard != null
-                    && paintGuard.getVisibility() == View.VISIBLE) {
-                hidePaintGuard(tab.session, false);
-            }
-            if (addressDisplay != null) {
-                boolean showAddress = !newTab && ZenPanelController.showAddressBar(this);
-                addressDisplay.setVisibility(showAddress ? View.VISIBLE : View.GONE);
-                addressDisplay.setText(showAddress ? displayHost(tab.url) : "Nueva pestaña");
-                addressDisplay.setContentDescription(showAddress
-                        ? "Dirección actual: " + tab.url
-                        : "Buscar o escribir una dirección");
-            }
-            setEnabled(backButton, tab.canGoBack);
-            setEnabled(forwardButton, tab.canGoForward);
-            reloadButton.setImageResource(tab.loading ? R.drawable.ic_stop : R.drawable.ic_reload);
-            reloadButton.setContentDescription(tab.loading ? "Detener" : "Recargar");
-            updateProgressBar(tab);
 
             String fingerprint = sidebarFingerprint();
             if (fixedSidebar != null && !fingerprint.equals(lastSidebarFingerprint)) {
@@ -4237,7 +4337,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 replacement.setVisibility(visibility);
                 root.removeView(fixedSidebar);
                 root.addView(replacement, index,
-                        new LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.MATCH_PARENT));
+                        new LinearLayout.LayoutParams(
+                                dp(58), ViewGroup.LayoutParams.MATCH_PARENT));
                 fixedSidebar = replacement;
                 lastSidebarFingerprint = fingerprint;
                 applyResponsiveLayout(getResources().getConfiguration());
@@ -4354,6 +4455,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private String faviconLetter(BrowserTab tab) {
+        if (browser != null && browser.isSettingsTab(tab)) return "⚙";
         String host = displayHost(tab == null ? null : tab.url);
         if (host.isEmpty() || "Nueva pestaña".equals(host)) return tab != null && tab.essential ? "◆" : "Z";
         return host.substring(0, 1).toUpperCase(Locale.ROOT);
@@ -4361,11 +4463,13 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     private String activeUrlForEditing() {
         BrowserTab tab = browser.getActiveTab();
-        if (tab == null || tab.url == null || "about:blank".equals(tab.url)) return "";
+        if (tab == null || browser.isInternalTab(tab)
+                || tab.url == null || "about:blank".equals(tab.url)) return "";
         return tab.url;
     }
 
     private String displayHost(String url) {
+        if (BrowserRepository.INTERNAL_SETTINGS_URL.equals(url)) return "Configuración";
         if (url == null || url.trim().isEmpty() || "about:blank".equals(url)) return "Nueva pestaña";
         try {
             Uri uri = Uri.parse(url);

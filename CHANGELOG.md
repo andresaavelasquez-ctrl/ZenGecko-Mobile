@@ -185,3 +185,21 @@
 - Añade soporte controlado para URI data: y mensajes claros para esquemas incompatibles.
 - Añade trazas de onPageStart, onFirstComposite, onFirstContentfulPaint, onPageStop, onPause y onResume.
 - Artefacto esperado: `ZenBrowser-v0.1.15-debug`.
+
+## v0.1.16 — Sidebar, Settings Tab & Context Safety
+
+- Rediseña el panel lateral como una tarjeta flotante con márgenes y esquinas completas.
+- Mueve Configuración a la esquina inferior izquierda.
+- Añade un selector segmentado Personal / Trabajo / Estudio en el centro inferior.
+- Mantiene Descargas en la esquina inferior derecha.
+- Mueve Favoritos, Historial y Perfil a una fila secundaria compacta.
+- Elimina el selector desplegable grande de espacios.
+- Convierte Configuración en una pestaña interna nativa `zen://settings`.
+- Garantiza una sola pestaña de Configuración sin crear una GeckoSession.
+- Hace interactiva toda la barra de búsqueda de la pantalla de Inicio.
+- Elimina la miniatura automática del menú contextual.
+- Filtra acciones no seguras, bloquea `blob:` y conserva descarga controlada para `data:`.
+- Cancela diálogos contextuales al pausar la actividad.
+- Endurece callbacks asíncronos de copiar y compartir imágenes.
+- Artefacto esperado: `ZenBrowser-v0.1.16-debug`.
+

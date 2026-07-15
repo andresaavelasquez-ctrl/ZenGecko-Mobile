@@ -24,6 +24,7 @@ import com.andres.zengecko.model.Workspace;
 public final class BrowserRepository {
     private static final String TAG = "ZenGecko/Browser";
     private static final long BLANK_TAB_GUARD_MS = 650L;
+    public static final String INTERNAL_SETTINGS_URL = "zen://settings";
 
     public interface Observer {
         void onBrowserStateChanged();
@@ -111,6 +112,50 @@ public final class BrowserRepository {
     public SearchEngine getSearchEngine() { return searchEngine; }
     public boolean canRestoreLastClosedTab() { return lastClosedTab != null; }
 
+    public boolean isInternalTab(BrowserTab tab) {
+        return tab != null && isInternalUrl(tab.url);
+    }
+
+    public boolean isSettingsTab(BrowserTab tab) {
+        return tab != null && INTERNAL_SETTINGS_URL.equals(tab.url);
+    }
+
+    public BrowserTab openSettingsTab() {
+        for (BrowserTab item : tabs) {
+            if (!INTERNAL_SETTINGS_URL.equals(item.url)) continue;
+            if (item.session != null) {
+                try { if (item.session.isOpen()) item.session.close(); }
+                catch (RuntimeException ignored) { }
+                item.session = null;
+            }
+            item.workspaceId = activeWorkspaceId;
+            item.title = "Configuración";
+            item.loading = false;
+            item.showStartPage = false;
+            item.hasValidPaint = true;
+            item.progress = 100;
+            activeTabId = item.id;
+            updateSessionActivity();
+            persistAndNotify();
+            return item;
+        }
+
+        BrowserTab settings = new BrowserTab(
+                UUID.randomUUID().toString(),
+                activeWorkspaceId,
+                "Configuración",
+                INTERNAL_SETTINGS_URL);
+        settings.showStartPage = false;
+        settings.hasValidPaint = true;
+        settings.loading = false;
+        settings.progress = 100;
+        tabs.add(settings);
+        activeTabId = settings.id;
+        updateSessionActivity();
+        persistAndNotify();
+        return settings;
+    }
+
     public void setAppForeground(boolean foreground) {
         appForeground = foreground;
         updateSessionActivity();
@@ -118,7 +163,7 @@ public final class BrowserRepository {
 
     public boolean setDesktopMode(String tabId, boolean enabled) {
         BrowserTab tab = findTab(tabId);
-        if (tab == null || tab.desktopMode == enabled) return false;
+        if (tab == null || isInternalTab(tab) || tab.desktopMode == enabled) return false;
         tab.desktopMode = enabled;
         applySessionSettings(tab);
         if (tab.session != null && tab.session.isOpen()
@@ -310,13 +355,26 @@ public final class BrowserRepository {
     public void loadInActiveTab(String input) {
         BrowserTab tab = getActiveTab();
         if (tab == null) return;
-        ensureSession(tab, false);
         String url = normalizeInput(input);
+        if (isInternalUrl(url)) {
+            openSettingsTab();
+            return;
+        }
+
+        boolean replacingInternal = isInternalTab(tab);
         tab.url = url;
         tab.showStartPage = "about:blank".equals(url);
         tab.hasValidPaint = tab.showStartPage;
+        tab.loading = false;
+        tab.progress = 0;
+        if (replacingInternal) {
+            tab.title = "Nueva pestaña";
+            tab.session = null;
+        }
+
+        ensureSession(tab, false);
         recordRecentUrl(url);
-        tab.session.loadUri(url);
+        if (tab.session != null) tab.session.loadUri(url);
         persistAndNotify();
     }
 
@@ -341,6 +399,18 @@ public final class BrowserRepository {
     }
 
     private void ensureSession(BrowserTab tab, boolean loadIfNew) {
+        if (isInternalTab(tab)) {
+            if (tab.session != null) {
+                try { if (tab.session.isOpen()) tab.session.close(); }
+                catch (RuntimeException ignored) { }
+                tab.session = null;
+            }
+            tab.loading = false;
+            tab.showStartPage = false;
+            tab.hasValidPaint = true;
+            tab.progress = 100;
+            return;
+        }
         if (tab.session != null && tab.session.isOpen()) {
             applySessionSettings(tab);
             return;
@@ -612,14 +682,20 @@ public final class BrowserRepository {
         return null;
     }
 
+    private static boolean isInternalUrl(String url) {
+        return url != null && url.startsWith("zen://");
+    }
+
     private void recordRecentUrl(String url) {
-        if (url == null || url.startsWith("about:") || url.startsWith("data:") || url.startsWith("view-source:")) return;
+        if (url == null || isInternalUrl(url) || url.startsWith("about:")
+                || url.startsWith("data:") || url.startsWith("view-source:")) return;
         recentUrls.remove(url);
         recentUrls.add(0, url);
         while (recentUrls.size() > MAX_RECENT_URLS) recentUrls.remove(recentUrls.size() - 1);
     }
 
     private static String fallbackTitle(String url) {
+        if (INTERNAL_SETTINGS_URL.equals(url)) return "Configuración";
         if (url == null || url.equals("about:blank")) return "Nueva pestaña";
         try {
             String host = Uri.parse(url).getHost();
@@ -653,8 +729,14 @@ public final class BrowserRepository {
                         tab.pinned = item.optBoolean("pinned", false);
                         tab.essential = item.optBoolean("essential", false);
                         tab.desktopMode = item.optBoolean("desktopMode", false);
-                        tab.showStartPage = "about:blank".equals(tab.url);
-                        tab.hasValidPaint = tab.showStartPage;
+                        boolean internal = isInternalUrl(tab.url);
+                        tab.showStartPage = !internal && "about:blank".equals(tab.url);
+                        tab.hasValidPaint = internal || tab.showStartPage;
+                        if (internal) {
+                            tab.title = "Configuración";
+                            tab.loading = false;
+                            tab.progress = 100;
+                        }
                         tabs.add(tab);
                     }
                 }
