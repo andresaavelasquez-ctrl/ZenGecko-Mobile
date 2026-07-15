@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#08070b">
+  <meta name="description" content="Descarga la versión más reciente de Zen Browser para Android.">
+  <title>Zen Browser para Android</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Zen Browser, inicio">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" role="img">
+          <path d="M16 15h34L27 38h21v11H14l23-23H16z"/>
+        </svg>
+      </span>
+      <span>
+        <strong>Zen Browser</strong>
+        <small>Android · GeckoView</small>
+      </span>
+    </a>
+
+    <a class="github-link"
+       href="https://github.com/andresaavelasquez-ctrl/ZenGecko-Mobile"
+       target="_blank" rel="noreferrer">
+      GitHub
+    </a>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="eyebrow"><span class="status-dot"></span> Proyecto comunitario para Android</div>
+      <h1>Navega con una interfaz más <span>limpia, rápida y enfocada.</span></h1>
+      <p class="hero-copy">
+        Zen Browser para Android está construido sobre GeckoView real, con diseño AMOLED,
+        espacios de navegación, pestañas, accesos rápidos y administración de descargas.
+      </p>
+
+      <div class="actions">
+        <a id="download-apk" class="button button-primary is-disabled"
+           href="https://github.com/andresaavelasquez-ctrl/ZenGecko-Mobile/releases/latest"
+           aria-disabled="true">
+          <span class="button-icon" aria-hidden="true">↓</span>
+          <span>
+            <strong>Preparando descarga</strong>
+            <small id="download-subtitle">Buscando la APK más reciente…</small>
+          </span>
+        </a>
+
+        <a id="release-page" class="button button-secondary"
+           href="https://github.com/andresaavelasquez-ctrl/ZenGecko-Mobile/releases"
+           target="_blank" rel="noreferrer">
+          Ver versiones
+        </a>
+      </div>
+
+      <p id="release-status" class="release-status" role="status" aria-live="polite">
+        Consultando GitHub Releases…
+      </p>
+    </section>
+
+    <section class="release-card" aria-labelledby="latest-title">
+      <div class="release-heading">
+        <div>
+          <p class="section-label">Última versión pública</p>
+          <h2 id="latest-title">Información de la APK</h2>
+        </div>
+        <span id="version-badge" class="version-badge">—</span>
+      </div>
+
+      <div class="release-grid">
+        <article>
+          <span>Publicada</span>
+          <strong id="release-date">—</strong>
+        </article>
+        <article>
+          <span>Tamaño</span>
+          <strong id="release-size">—</strong>
+        </article>
+        <article>
+          <span>Archivo</span>
+          <strong id="release-file">—</strong>
+        </article>
+      </div>
+
+      <div class="release-notes">
+        <h3>Novedades</h3>
+        <ul id="release-notes-list">
+          <li>Las novedades aparecerán al publicar la primera GitHub Release.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="features">
+      <article>
+        <span class="feature-number">01</span>
+        <h2>GeckoView real</h2>
+        <p>Motor de Mozilla integrado directamente en Android, sin depender de WebView.</p>
+      </article>
+      <article>
+        <span class="feature-number">02</span>
+        <h2>Interfaz AMOLED</h2>
+        <p>Una experiencia visual oscura, compacta y diseñada para dispositivos móviles.</p>
+      </article>
+      <article>
+        <span class="feature-number">03</span>
+        <h2>Actualización automática</h2>
+        <p>El botón siempre enlaza la APK de la Release pública más reciente.</p>
+      </article>
+    </section>
+
+    <section class="install-card">
+      <div>
+        <p class="section-label">Instalación</p>
+        <h2>Instala la APK en Android</h2>
+      </div>
+      <ol>
+        <li>Descarga el archivo APK.</li>
+        <li>Autoriza temporalmente la instalación desde tu navegador o gestor de archivos.</li>
+        <li>Abre el archivo y confirma la instalación.</li>
+      </ol>
+      <p class="warning">
+        Proyecto comunitario no oficial. No es una distribución oficial de Zen Browser.
+      </p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Zen Browser Mobile · Código bajo las licencias indicadas en el repositorio.</p>
+    <div>
+      <a id="source-code"
+         href="https://github.com/andresaavelasquez-ctrl/ZenGecko-Mobile/archive/refs/heads/main.zip">
+        Descargar código fuente
+      </a>
+      <a href="https://github.com/andresaavelasquez-ctrl/ZenGecko-Mobile/issues"
+         target="_blank" rel="noreferrer">
+        Reportar un problema
+      </a>
+    </div>
+  </footer>
+</body>
+</html>

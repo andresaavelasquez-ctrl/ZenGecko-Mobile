@@ -1,0 +1,134 @@
+name: Publicar APK en GitHub Releases
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar SDK requerido
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Leer versión del proyecto
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="$(sed -n "s/^[[:space:]]*versionName[[:space:]]*'\([^']*\)'.*/\1/p" app/build.gradle | head -n 1)"
+
+          if [ -z "$VERSION" ]; then
+            echo "No se pudo leer versionName desde app/build.gradle"
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+          APK_NAME="ZenBrowser-v${VERSION}-debug.apk"
+
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            if [ "${GITHUB_REF_NAME}" != "$TAG" ]; then
+              echo "La etiqueta ${GITHUB_REF_NAME} no coincide con versionName ${VERSION}."
+              echo "Usa la etiqueta ${TAG}."
+              exit 1
+            fi
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Restaurar clave estable de firma
+        env:
+          ZENGECKO_KEYSTORE_B64: ${{ secrets.ZENGECKO_KEYSTORE_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ZENGECKO_KEYSTORE_B64" || {
+            echo "Falta el secret ZENGECKO_KEYSTORE_B64"
+            exit 1
+          }
+          printf "%s" "$ZENGECKO_KEYSTORE_B64" |
+            base64 --decode > "$RUNNER_TEMP/zengecko-update.jks"
+
+      - name: Compilar APK firmada
+        env:
+          ZEN_KEYSTORE_FILE: ${{ runner.temp }}/zengecko-update.jks
+          ZEN_STORE_PASSWORD: ${{ secrets.ZENGECKO_STORE_PASSWORD }}
+          ZEN_KEY_ALIAS: ${{ secrets.ZENGECKO_KEY_ALIAS }}
+          ZEN_KEY_PASSWORD: ${{ secrets.ZENGECKO_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ZEN_STORE_PASSWORD"
+          test -n "$ZEN_KEY_ALIAS"
+          test -n "$ZEN_KEY_PASSWORD"
+
+          gradle :app:assembleDebug --stacktrace
+
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk \
+            "dist/${{ steps.version.outputs.apk_name }}"
+
+      - name: Guardar artefacto de Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZenBrowser-${{ steps.version.outputs.tag }}-debug
+          path: dist/${{ steps.version.outputs.apk_name }}
+          retention-days: 14
+
+      - name: Crear o actualizar GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          APK_PATH: dist/${{ steps.version.outputs.apk_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK_PATH" \
+              --clobber \
+              --repo "$GITHUB_REPOSITORY"
+
+            gh release edit "$TAG" \
+              --title "Zen Browser v${VERSION}" \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "$APK_PATH" \
+              --target "$GITHUB_SHA" \
+              --title "Zen Browser v${VERSION}" \
+              --generate-notes \
+              --repo "$GITHUB_REPOSITORY"
+          fi
