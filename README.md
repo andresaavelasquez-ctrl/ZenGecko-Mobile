@@ -231,3 +231,18 @@ Artefacto esperado: `ZenBrowser-v0.1.15-debug`.
 - Endurece callbacks asíncronos de copiar y compartir imágenes.
 - Artefacto esperado: `ZenBrowser-v0.1.16-debug`.
 
+## v0.1.17 — Theme & Interface Refinement
+
+- Corrige la apertura y el envío de búsquedas desde la barra superior y la pantalla de Inicio.
+- Acepta las acciones IME Buscar, Ir, Hecho y Enter sin crear pestañas vacías.
+- Rediseña Configuración como una lista limpia, sin tarjetas pesadas ni recuadro en el encabezado.
+- Añade selector Noche / Día en Apariencia y un acceso Luna/Sol en el panel lateral.
+- Incorpora una paleta clara global para barras, paneles, pestañas, diálogos y páginas internas.
+- Reorganiza Inicio, Favoritos, Historial, Perfil y tema en la zona superior del panel.
+- Reduce el dock inferior y deja recuadro únicamente alrededor de Personal / Trabajo / Estudio.
+- Escala el espacio activo y reduce visualmente los dos espacios inactivos.
+- Cambia entre espacios actualizando solo la etiqueta, la lista de pestañas y el selector inferior.
+- Rediseña por completo el editor Añadir/Editar acceso con un diálogo propio y sin fondo gris exterior.
+- Conserva las protecciones del menú contextual introducidas en v0.1.16.
+- Artefacto esperado: `ZenBrowser-v0.1.17-debug`.
+

@@ -2,6 +2,7 @@ package com.andres.zengecko;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.animation.ObjectAnimator;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -159,6 +160,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private boolean newTabRequestPending;
     private Bitmap transitionBitmap;
     private Runnable sidebarRefreshRunnable;
+    private LinearLayout sidebarTabsHost;
+    private TextView sidebarWorkspaceLabel;
+    private final ImageButton[] sidebarWorkspaceButtons = new ImageButton[3];
+    private boolean sidebarWorkspaceTransition;
 
 
     private static final class ContextTarget {
@@ -230,6 +235,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         if (value == null) return false;
         String clean = value.trim().toLowerCase(Locale.ROOT);
         return clean.startsWith("https://") || clean.startsWith("http://");
+    }
+
+    @Override protected void attachBaseContext(Context newBase) {
+        super.attachBaseContext(ZenTheme.wrap(newBase));
     }
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -724,6 +733,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             }
             window.getDecorView().setSystemUiVisibility(layoutFlags);
         }
+        ZenTheme.applySystemBarAppearance(this);
     }
 
 
@@ -1225,6 +1235,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         FrameLayout addressShell = new FrameLayout(this);
         addressShell.setBackgroundResource(R.drawable.bg_address_soft);
         addressShell.setClipToOutline(true);
+        bindSearchTrigger(addressShell, false);
 
         addressGlow = new View(this);
         addressGlow.setBackgroundResource(R.drawable.bg_address_glow);
@@ -1243,7 +1254,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         addressDisplay.setCompoundDrawablePadding(dp(7));
         addressDisplay.setPadding(dp(13), 0, dp(13), 0);
         addressDisplay.setBackgroundColor(Color.TRANSPARENT);
-        addressDisplay.setOnClickListener(v -> showSearchPopup(false));
+        bindSearchTrigger(addressDisplay, false);
         addressShell.addView(addressDisplay, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
@@ -1263,7 +1274,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         bar.addView(reloadButton, square(32));
 
         ImageButton search = toolbarButton(R.drawable.ic_search, "Desplegar búsqueda");
-        search.setOnClickListener(v -> showSearchPopup(false));
+        search.setOnClickListener(v -> openSearchEditor(false));
         bar.addView(search, square(34));
         return bar;
     }
@@ -1369,15 +1380,29 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void openHomeSearch() {
-        if (!isActivityUsable()
-                || searchPopup != null && searchPopup.isShowing()) return;
-        showSearchPopup(true);
-        mainHandler.postDelayed(() -> {
-            if (searchInput != null && searchPopup != null
-                    && searchPopup.isShowing()) {
+        openSearchEditor(true);
+    }
+
+    private void bindSearchTrigger(View trigger, boolean newTabMode) {
+        if (trigger == null) return;
+        trigger.setClickable(true);
+        trigger.setFocusable(true);
+        trigger.setOnClickListener(v -> openSearchEditor(newTabMode));
+    }
+
+    private void openSearchEditor(boolean newTabMode) {
+        if (!isActivityUsable() || isImmersiveMode()) return;
+        dismissSearchPopupImmediate();
+        mainHandler.post(() -> {
+            if (!isActivityUsable()) return;
+            showSearchPopup(newTabMode);
+            mainHandler.postDelayed(() -> {
+                if (searchInput == null || searchPopup == null
+                        || !searchPopup.isShowing()) return;
+                searchInput.requestFocus();
                 showKeyboard(searchInput);
-            }
-        }, 90L);
+            }, 80L);
+        });
     }
 
     private View quickSite(String title, String url, int iconRes) {
@@ -1450,7 +1475,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         rail.setPadding(dp(5), dp(6), dp(5), dp(6));
         rail.setBackgroundResource(R.drawable.bg_compact_rail);
 
-        TextView zen = text("Z", 18, R.color.zen_bg);
+        TextView zen = text("Z", 18, R.color.zen_key_text);
         zen.setTypeface(Typeface.DEFAULT_BOLD);
         zen.setGravity(Gravity.CENTER);
         zen.setBackgroundResource(R.drawable.bg_zen_mark);
@@ -1619,163 +1644,176 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         panel.addView(brand, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
 
-        LinearLayout navigation = new LinearLayout(this);
-        navigation.setGravity(Gravity.CENTER);
-        navigation.setPadding(dp(4), dp(2), dp(4), dp(2));
-
-        ImageButton home = iconButton(R.drawable.ic_home, "Inicio");
-        home.setOnClickListener(v -> {
-            String homeUrl = ZenPanelController.homeUrl(this);
-            dismissSidebarPopup();
-            browser.loadInActiveTab(homeUrl);
-        });
-        navigation.addView(home, square(38));
-
-        ImageButton sideBack = iconButton(R.drawable.ic_back, "Atrás");
-        sideBack.setOnClickListener(v -> {
-            BrowserTab tab = browser.getActiveTab();
-            if (tab != null && tab.session != null && tab.canGoBack) tab.session.goBack();
-        });
-        navigation.addView(sideBack, square(38));
-
-        ImageButton sideForward = iconButton(R.drawable.ic_forward, "Adelante");
-        sideForward.setOnClickListener(v -> {
-            BrowserTab tab = browser.getActiveTab();
-            if (tab != null && tab.session != null && tab.canGoForward) tab.session.goForward();
-        });
-        navigation.addView(sideForward, square(38));
-
-        ImageButton sideReload = iconButton(R.drawable.ic_reload, "Recargar");
-        sideReload.setOnClickListener(v -> {
-            BrowserTab tab = browser.getActiveTab();
-            if (tab != null && tab.session != null) {
-                if (tab.loading) tab.session.stop(); else tab.session.reload();
-            }
-        });
-        navigation.addView(sideReload, square(38));
-        panel.addView(navigation, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
-
+        panel.addView(createSidebarTopActions(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
         panel.addView(createSidebarShortcutGrid());
-        panel.addView(createSidebarSecondaryActions());
 
-        TextView openLabel = label(
+        sidebarWorkspaceLabel = label(
                 browser.getActiveWorkspaceName().toUpperCase(Locale.ROOT)
                         + "  ·  PESTAÑAS ABIERTAS");
-        panel.addView(openLabel);
+        panel.addView(sidebarWorkspaceLabel);
 
         ScrollView tabsScroll = new ScrollView(this);
         tabsScroll.setFillViewport(true);
         tabsScroll.setVerticalScrollBarEnabled(false);
-        LinearLayout tabsColumn = new LinearLayout(this);
-        tabsColumn.setOrientation(LinearLayout.VERTICAL);
-        for (BrowserTab tab : browser.getVisibleTabs()) {
-            tabsColumn.addView(tabRow(tab));
-        }
-
-        TextView newTab = text("＋   Nueva pestaña", 13, R.color.zen_muted);
-        newTab.setGravity(Gravity.CENTER_VERTICAL);
-        newTab.setPadding(dp(12), 0, dp(12), 0);
-        newTab.setBackgroundResource(R.drawable.bg_button);
-        newTab.setOnClickListener(this::openNewTabFromSidebar);
-        LinearLayout.LayoutParams newTabParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(40));
-        newTabParams.setMargins(0, dp(2), 0, dp(3));
-        tabsColumn.addView(newTab, newTabParams);
-
-        tabsScroll.addView(tabsColumn);
+        sidebarTabsHost = new LinearLayout(this);
+        sidebarTabsHost.setOrientation(LinearLayout.VERTICAL);
+        populateSidebarTabs();
+        tabsScroll.addView(sidebarTabsHost);
         panel.addView(tabsScroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         View dock = createSidebarDock();
         LinearLayout.LayoutParams dockParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(54));
-        dockParams.setMargins(0, dp(6), 0, 0);
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
+        dockParams.setMargins(0, dp(5), 0, 0);
         panel.addView(dock, dockParams);
         return panel;
     }
 
-    private View createSidebarSecondaryActions() {
+    private View createSidebarTopActions() {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER);
-        row.setPadding(0, dp(3), 0, dp(3));
-        row.addView(sidebarBottomAction(
-                R.drawable.ic_star,
-                "Favoritos",
-                () -> ZenPanelController.showFavorites(
-                        this, browser, this::showSidebarPopup)),
-                new LinearLayout.LayoutParams(0, dp(44), 1f));
-        row.addView(sidebarBottomAction(
-                R.drawable.ic_history,
-                "Historial",
-                () -> ZenPanelController.showHistory(
-                        this, browser, this::showSidebarPopup)),
-                new LinearLayout.LayoutParams(0, dp(44), 1f));
-        row.addView(sidebarBottomAction(
-                R.drawable.ic_profile,
-                "Perfil",
-                () -> ZenPanelController.showProfiles(
-                        this, this::showSidebarPopup)),
-                new LinearLayout.LayoutParams(0, dp(44), 1f));
+        row.setPadding(dp(3), dp(3), dp(3), dp(3));
+        row.addView(sidebarTopAction(R.drawable.ic_home, "Inicio", () -> {
+            String homeUrl = ZenPanelController.homeUrl(this);
+            dismissSidebarPopupImmediate();
+            browser.loadInActiveTab(homeUrl);
+        }), new LinearLayout.LayoutParams(0, dp(40), 1f));
+        row.addView(sidebarTopAction(R.drawable.ic_star, "Favoritos", () -> {
+            dismissSidebarPopupImmediate();
+            ZenPanelController.showFavorites(this, browser, this::showSidebarPopup);
+        }), new LinearLayout.LayoutParams(0, dp(40), 1f));
+        row.addView(sidebarTopAction(R.drawable.ic_history, "Historial", () -> {
+            dismissSidebarPopupImmediate();
+            ZenPanelController.showHistory(this, browser, this::showSidebarPopup);
+        }), new LinearLayout.LayoutParams(0, dp(40), 1f));
+        row.addView(sidebarTopAction(R.drawable.ic_profile, "Perfil", () -> {
+            dismissSidebarPopupImmediate();
+            ZenPanelController.showProfiles(this, this::showSidebarPopup);
+        }), new LinearLayout.LayoutParams(0, dp(40), 1f));
+        int themeIcon = ZenTheme.isDay(this)
+                ? R.drawable.ic_theme_moon : R.drawable.ic_theme_sun;
+        String themeDescription = ZenTheme.isDay(this)
+                ? "Activar tema Noche" : "Activar tema Día";
+        row.addView(sidebarTopAction(themeIcon, themeDescription, () -> {
+            dismissSidebarPopupImmediate();
+            ZenTheme.toggle(this);
+        }), new LinearLayout.LayoutParams(0, dp(40), 1f));
         return row;
+    }
+
+    private ImageButton sidebarTopAction(
+            int iconRes, String description, Runnable action) {
+        ImageButton button = iconButton(iconRes, description);
+        button.setBackgroundResource(R.drawable.bg_toolbar_button);
+        button.setPadding(dp(8), dp(8), dp(8), dp(8));
+        button.setOnClickListener(v -> {
+            if (action != null) action.run();
+        });
+        return button;
+    }
+
+    private void populateSidebarTabs() {
+        if (sidebarTabsHost == null) return;
+        sidebarTabsHost.animate().cancel();
+        sidebarTabsHost.removeAllViews();
+        for (BrowserTab tab : browser.getVisibleTabs()) {
+            sidebarTabsHost.addView(tabRow(tab));
+        }
+        TextView newTab = text("＋   Nueva pestaña", 13, R.color.zen_muted);
+        newTab.setGravity(Gravity.CENTER_VERTICAL);
+        newTab.setPadding(dp(12), 0, dp(12), 0);
+        newTab.setBackgroundResource(R.drawable.bg_button);
+        newTab.setOnClickListener(this::openNewTabFromSidebar);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(40));
+        params.setMargins(0, dp(2), 0, dp(3));
+        sidebarTabsHost.addView(newTab, params);
     }
 
     private View createSidebarDock() {
         LinearLayout dock = new LinearLayout(this);
         dock.setGravity(Gravity.CENTER_VERTICAL);
-        dock.setPadding(dp(5), dp(4), dp(5), dp(4));
-        dock.setBackgroundResource(R.drawable.bg_sidebar_dock);
+        dock.setPadding(dp(2), dp(2), dp(2), dp(2));
+        dock.setBackgroundColor(Color.TRANSPARENT);
 
         ImageButton settings = iconButton(R.drawable.ic_settings, "Configuración");
-        settings.setBackgroundResource(R.drawable.bg_workspace_idle);
-        settings.setPadding(dp(9), dp(9), dp(9), dp(9));
+        settings.setBackgroundColor(Color.TRANSPARENT);
+        settings.setPadding(dp(8), dp(8), dp(8), dp(8));
         settings.setOnClickListener(v -> openSettingsTabFromSidebar());
-        dock.addView(settings, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        dock.addView(settings, new LinearLayout.LayoutParams(dp(38), dp(38)));
 
         LinearLayout spaces = new LinearLayout(this);
         spaces.setGravity(Gravity.CENTER);
         spaces.setPadding(dp(2), dp(2), dp(2), dp(2));
         spaces.setBackgroundResource(R.drawable.bg_profile_selector);
         spaces.addView(createWorkspaceSegmentButton(
-                "personal", "Personal"), new LinearLayout.LayoutParams(0, dp(40), 1f));
+                "personal", "Personal"), new LinearLayout.LayoutParams(0, dp(36), 1f));
         spaces.addView(createWorkspaceSegmentButton(
-                "work", "Trabajo"), new LinearLayout.LayoutParams(0, dp(40), 1f));
+                "work", "Trabajo"), new LinearLayout.LayoutParams(0, dp(36), 1f));
         spaces.addView(createWorkspaceSegmentButton(
-                "education", "Estudio"), new LinearLayout.LayoutParams(0, dp(40), 1f));
+                "education", "Estudio"), new LinearLayout.LayoutParams(0, dp(36), 1f));
         LinearLayout.LayoutParams spacesParams =
-                new LinearLayout.LayoutParams(0, dp(44), 1f);
-        spacesParams.setMargins(dp(7), 0, dp(7), 0);
+                new LinearLayout.LayoutParams(0, dp(40), 1f);
+        spacesParams.setMargins(dp(8), 0, dp(8), 0);
         dock.addView(spaces, spacesParams);
 
         ImageButton downloads = iconButton(R.drawable.ic_downloads, "Descargas");
-        downloads.setBackgroundResource(R.drawable.bg_workspace_idle);
-        downloads.setPadding(dp(9), dp(9), dp(9), dp(9));
+        downloads.setBackgroundColor(Color.TRANSPARENT);
+        downloads.setPadding(dp(8), dp(8), dp(8), dp(8));
         downloads.setOnClickListener(v -> {
             dismissSidebarPopupImmediate();
-            ZenPanelController.showDownloads(
-                    this, browser, this::showSidebarPopup);
+            ZenPanelController.showDownloads(this, browser, this::showSidebarPopup);
         });
-        dock.addView(downloads, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        dock.addView(downloads, new LinearLayout.LayoutParams(dp(38), dp(38)));
         return dock;
     }
 
     private View createWorkspaceSegmentButton(String workspaceId, String description) {
         boolean active = workspaceId.equals(browser.getActiveWorkspaceId());
         ImageButton button = iconButton(workspaceIconRes(workspaceId), description);
-        button.setImageTintList(ColorStateList.valueOf(getColor(
-                active ? R.color.zen_text : R.color.zen_muted)));
-        button.setBackgroundResource(
-                active ? R.drawable.bg_workspace_active : R.drawable.bg_workspace_idle);
-        button.setPadding(dp(9), dp(9), dp(9), dp(9));
+        int index = workspaceButtonIndex(workspaceId);
+        if (index >= 0) sidebarWorkspaceButtons[index] = button;
+        styleWorkspaceButton(button, active);
         button.setOnClickListener(v -> {
-            if (workspaceId.equals(browser.getActiveWorkspaceId())) return;
-            v.setEnabled(false);
+            if (workspaceId.equals(browser.getActiveWorkspaceId())
+                    || sidebarWorkspaceTransition) return;
             switchWorkspaceWithSlide(workspaceId);
-            mainHandler.postDelayed(() -> {
-                if (v.isAttachedToWindow()) v.setEnabled(true);
-            }, 360L);
         });
         return button;
+    }
+
+    private int workspaceButtonIndex(String workspaceId) {
+        if ("personal".equals(workspaceId)) return 0;
+        if ("work".equals(workspaceId)) return 1;
+        if ("education".equals(workspaceId)) return 2;
+        return -1;
+    }
+
+    private void styleWorkspaceButton(ImageButton button, boolean active) {
+        if (button == null) return;
+        button.animate().cancel();
+        button.setBackgroundResource(active
+                ? R.drawable.bg_workspace_active : R.drawable.bg_workspace_idle);
+        button.setImageTintList(ColorStateList.valueOf(getColor(
+                active ? R.color.zen_text : R.color.zen_muted)));
+        button.setAlpha(active ? 1f : .52f);
+        button.setScaleX(active ? 1f : .82f);
+        button.setScaleY(active ? 1f : .82f);
+        button.setPadding(dp(8), dp(8), dp(8), dp(8));
+    }
+
+    private void updateSidebarWorkspaceChrome() {
+        if (sidebarWorkspaceLabel != null) {
+            sidebarWorkspaceLabel.setText(
+                    browser.getActiveWorkspaceName().toUpperCase(Locale.ROOT)
+                            + "  ·  PESTAÑAS ABIERTAS");
+        }
+        String active = browser.getActiveWorkspaceId();
+        styleWorkspaceButton(sidebarWorkspaceButtons[0], "personal".equals(active));
+        styleWorkspaceButton(sidebarWorkspaceButtons[1], "work".equals(active));
+        styleWorkspaceButton(sidebarWorkspaceButtons[2], "education".equals(active));
     }
 
     private void openSettingsTabFromSidebar() {
@@ -1977,20 +2015,40 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 ? QuickAccessStore.create(workspaceId, "", "", "")
                 : existing.copy();
 
-        LinearLayout form = new LinearLayout(this);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(16), dp(13), dp(16), dp(6));
-        form.setBackgroundResource(R.drawable.bg_quick_editor);
+        Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        dialog.setCanceledOnTouchOutside(true);
+
+        LinearLayout sheet = new LinearLayout(this);
+        sheet.setOrientation(LinearLayout.VERTICAL);
+        sheet.setPadding(dp(18), dp(17), dp(18), dp(15));
+        sheet.setBackgroundResource(R.drawable.bg_quick_editor_sheet);
+
+        TextView title = text(
+                existing == null ? "Añadir acceso" : "Editar acceso",
+                20,
+                R.color.zen_text);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        sheet.addView(title);
+        TextView subtitle = text(
+                "Personaliza el nombre, la dirección y su icono.",
+                10,
+                R.color.zen_muted);
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        subtitleParams.setMargins(0, dp(2), 0, dp(12));
+        sheet.addView(subtitle, subtitleParams);
 
         LinearLayout previewRow = new LinearLayout(this);
         previewRow.setGravity(Gravity.CENTER_VERTICAL);
+        previewRow.setPadding(dp(2), dp(2), dp(2), dp(5));
         ImageView preview = new ImageView(this);
         preview.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         preview.setBackgroundResource(R.drawable.bg_favicon);
         preview.setImageResource(R.drawable.ic_open_new);
         preview.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_muted)));
         previewRow.addView(preview, new LinearLayout.LayoutParams(dp(48), dp(48)));
-
         TextView previewText = text(
                 existing == null ? "Nuevo acceso" : existing.name,
                 14,
@@ -2000,28 +2058,19 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 new LinearLayout.LayoutParams(0, dp(48), 1f);
         previewTextParams.setMargins(dp(12), 0, 0, 0);
         previewRow.addView(previewText, previewTextParams);
-        form.addView(previewRow);
+        sheet.addView(previewRow);
 
-        EditText name = quickAccessInput(
-                "Nombre",
-                existing == null ? "" : existing.name);
-        EditText url = quickAccessInput(
-                "https://sitio.com",
-                existing == null ? "" : existing.url);
+        EditText name = quickAccessInput("Nombre", existing == null ? "" : existing.name);
+        EditText url = quickAccessInput("https://sitio.com", existing == null ? "" : existing.url);
         EditText iconUrl = quickAccessInput(
                 "Icono automático o URL de imagen",
                 existing == null ? "" : existing.iconUrl);
-        form.addView(name, quickEditorParams());
-        form.addView(url, quickEditorParams());
-        form.addView(iconUrl, quickEditorParams());
+        sheet.addView(quickEditorField("NOMBRE", name));
+        sheet.addView(quickEditorField("DIRECCIÓN", url));
+        sheet.addView(quickEditorField("ICONO", iconUrl));
 
-        TextView detect = text(
-                "DETECTAR ICONO AUTOMÁTICAMENTE",
-                10,
-                R.color.zen_accent);
-        detect.setTypeface(Typeface.DEFAULT_BOLD);
-        detect.setGravity(Gravity.CENTER);
-        detect.setBackgroundResource(R.drawable.bg_context_action);
+        TextView detect = quickEditorAction(
+                "Detectar icono automáticamente", false);
         detect.setOnClickListener(v -> {
             String cleanUrl = url.getText().toString().trim();
             if (cleanUrl.isEmpty()) {
@@ -2033,118 +2082,140 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             loadQuickAccessPreview(preview, detected);
         });
         LinearLayout.LayoutParams detectParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(40));
-        detectParams.setMargins(0, dp(4), 0, 0);
-        form.addView(detect, detectParams);
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42));
+        detectParams.setMargins(0, dp(8), 0, dp(12));
+        sheet.addView(detect, detectParams);
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(this)
-                .setTitle(existing == null ? "Añadir acceso" : "Editar acceso")
-                .setView(form)
-                .setNegativeButton("Cancelar", null)
-                .setPositiveButton("Guardar", null);
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
         if (existing != null) {
-            builder.setNeutralButton("Eliminar", null);
+            TextView remove = quickEditorAction("Eliminar", false);
+            remove.setTextColor(getColor(R.color.zen_danger));
+            remove.setOnClickListener(v -> new AlertDialog.Builder(this)
+                    .setTitle("Eliminar acceso")
+                    .setMessage("¿Quitar " + existing.name + "?")
+                    .setNegativeButton("Cancelar", null)
+                    .setPositiveButton("Eliminar", (confirm, which) -> {
+                        QuickAccessStore.remove(
+                                getApplicationContext(), workspaceId, existing.id);
+                        dialog.dismiss();
+                        mainHandler.postDelayed(() -> {
+                            if (isActivityUsable()) showSidebarPopup();
+                        }, 120L);
+                    })
+                    .show());
+            actions.addView(remove, new LinearLayout.LayoutParams(0, dp(42), 1f));
+        } else {
+            actions.addView(new View(this), new LinearLayout.LayoutParams(0, dp(42), 1f));
         }
 
-        AlertDialog dialog = builder.create();
-        dialog.setOnDismissListener(ignored -> RemoteAssetLoader.cancel(preview));
-        dialog.setOnShowListener(ignored -> {
-            if (!isActivityUsable()) {
-                dialog.dismiss();
+        TextView cancel = quickEditorAction("Cancelar", false);
+        LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(dp(94), dp(42));
+        cancelParams.setMargins(dp(7), 0, dp(7), 0);
+        actions.addView(cancel, cancelParams);
+
+        TextView save = quickEditorAction("Guardar", true);
+        actions.addView(save, new LinearLayout.LayoutParams(dp(96), dp(42)));
+        sheet.addView(actions);
+
+        cancel.setOnClickListener(v -> dialog.dismiss());
+        save.setOnClickListener(v -> {
+            String cleanName = name.getText().toString().trim();
+            String cleanUrl = url.getText().toString().trim();
+            if (cleanName.isEmpty()) {
+                name.setError("Escribe un nombre");
                 return;
             }
-
-            TextView save = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
-            if (save == null) return;
-            save.setTextColor(getColor(R.color.zen_accent));
-            save.setOnClickListener(v -> {
-                String cleanName = name.getText().toString().trim();
-                String cleanUrl = url.getText().toString().trim();
-                if (cleanUrl.isEmpty()) {
-                    url.setError("Escribe una dirección");
-                    return;
+            if (cleanUrl.isEmpty()) {
+                url.setError("Escribe una dirección");
+                return;
+            }
+            v.setEnabled(false);
+            try {
+                draft.workspaceId = workspaceId;
+                draft.name = cleanName;
+                draft.url = QuickAccessStore.normalizeUrl(cleanUrl);
+                draft.iconUrl = iconUrl.getText().toString().trim();
+                if (draft.iconUrl.isEmpty()) {
+                    draft.iconUrl = QuickAccessStore.automaticIconUrl(draft.url);
                 }
-
-                v.setEnabled(false);
-                try {
-                    draft.workspaceId = workspaceId;
-                    draft.name = cleanName;
-                    draft.url = QuickAccessStore.normalizeUrl(cleanUrl);
-                    draft.iconUrl = iconUrl.getText().toString().trim();
-                    if (draft.iconUrl.isEmpty()) {
-                        draft.iconUrl = QuickAccessStore.automaticIconUrl(draft.url);
-                    }
-
-                    if (!QuickAccessStore.save(getApplicationContext(), draft)) {
-                        Toast.makeText(
-                                MainActivity.this,
-                                "El espacio ya tiene el máximo de accesos",
-                                Toast.LENGTH_SHORT).show();
-                        v.setEnabled(true);
-                        return;
-                    }
-
-                    dialog.dismiss();
-                    mainHandler.postDelayed(() -> {
-                        if (isActivityUsable()) showSidebarPopup();
-                    }, 120L);
-                } catch (Throwable error) {
-                    Log.e(TAG, "Unable to save quick access", error);
-                    Toast.makeText(
-                            MainActivity.this,
-                            "No se pudo guardar el acceso",
+                if (!QuickAccessStore.save(getApplicationContext(), draft)) {
+                    Toast.makeText(this,
+                            "El espacio ya tiene el máximo de accesos",
                             Toast.LENGTH_SHORT).show();
                     v.setEnabled(true);
+                    return;
                 }
-            });
-
-            if (existing != null) {
-                TextView remove = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
-                if (remove != null) {
-                    remove.setTextColor(getColor(R.color.zen_danger));
-                    remove.setOnClickListener(v -> new AlertDialog.Builder(this)
-                            .setTitle("Eliminar acceso")
-                            .setMessage("¿Quitar " + existing.name + "?")
-                            .setNegativeButton("Cancelar", null)
-                            .setPositiveButton("Eliminar", (confirm, which) -> {
-                                try {
-                                    QuickAccessStore.remove(
-                                            getApplicationContext(),
-                                            workspaceId,
-                                            existing.id);
-                                    dialog.dismiss();
-                                    mainHandler.postDelayed(() -> {
-                                        if (isActivityUsable()) showSidebarPopup();
-                                    }, 120L);
-                                } catch (Throwable error) {
-                                    Log.e(TAG, "Unable to remove quick access", error);
-                                }
-                            })
-                            .show());
-                }
-            }
-
-            if (existing != null
-                    && existing.iconUrl != null
-                    && !existing.iconUrl.trim().isEmpty()) {
-                mainHandler.postDelayed(
-                        () -> loadQuickAccessPreview(preview, existing.iconUrl),
-                        80L);
+                dialog.dismiss();
+                mainHandler.postDelayed(() -> {
+                    if (isActivityUsable()) showSidebarPopup();
+                }, 120L);
+            } catch (Throwable error) {
+                Log.e(TAG, "Unable to save quick access", error);
+                Toast.makeText(this,
+                        "No se pudo guardar el acceso",
+                        Toast.LENGTH_SHORT).show();
+                v.setEnabled(true);
             }
         });
 
+        dialog.setContentView(sheet);
+        dialog.setOnDismissListener(ignored -> RemoteAssetLoader.cancel(preview));
         try {
             dialog.show();
+            Window window = dialog.getWindow();
+            if (window == null) return;
+            window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            WindowManager.LayoutParams attributes = window.getAttributes();
+            attributes.dimAmount = ZenTheme.isDay(this) ? .22f : .38f;
+            window.setAttributes(attributes);
+            int width = Math.min(dp(420),
+                    getResources().getDisplayMetrics().widthPixels - dp(30));
+            window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT);
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+            sheet.setAlpha(0f);
+            sheet.setTranslationY(dp(12));
+            sheet.animate().alpha(1f).translationY(0f).setDuration(150L).start();
+            if (existing != null && existing.iconUrl != null
+                    && !existing.iconUrl.trim().isEmpty()) {
+                mainHandler.postDelayed(
+                        () -> loadQuickAccessPreview(preview, existing.iconUrl), 80L);
+            }
         } catch (RuntimeException error) {
             Log.e(TAG, "Unable to show quick access editor", error);
             try { dialog.dismiss(); } catch (RuntimeException ignored) { }
-            Toast.makeText(
-                    this,
+            Toast.makeText(this,
                     "No se pudo abrir el editor de accesos",
                     Toast.LENGTH_SHORT).show();
         }
     }
 
+    private View quickEditorField(String label, EditText input) {
+        LinearLayout field = new LinearLayout(this);
+        field.setOrientation(LinearLayout.VERTICAL);
+        TextView title = text(label, 9, R.color.zen_muted);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setLetterSpacing(.10f);
+        title.setPadding(dp(5), dp(6), 0, dp(4));
+        field.addView(title);
+        field.addView(input, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+        return field;
+    }
+
+    private TextView quickEditorAction(String label, boolean primary) {
+        TextView action = text(label, 11,
+                primary ? R.color.zen_bg : R.color.zen_text);
+        action.setTypeface(Typeface.DEFAULT_BOLD);
+        action.setGravity(Gravity.CENTER);
+        action.setBackgroundResource(primary
+                ? R.drawable.bg_quick_editor_button_primary
+                : R.drawable.bg_quick_editor_button_secondary);
+        action.setClickable(true);
+        action.setFocusable(true);
+        return action;
+    }
 
     private EditText quickAccessInput(String hint, String value) {
         EditText input = new EditText(this);
@@ -2154,7 +2225,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         input.setTextColor(getColor(R.color.zen_text));
         input.setHintTextColor(getColor(R.color.zen_muted));
         input.setTextSize(13);
-        input.setBackgroundResource(R.drawable.bg_address_rounder);
+        input.setBackgroundResource(R.drawable.bg_input_clean);
         input.setPadding(dp(13), 0, dp(13), 0);
         return input;
     }
@@ -2478,6 +2549,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             sidebarPanelHost = null;
             sidebarScrim = null;
             sidebarAnimatedPanel = null;
+            sidebarTabsHost = null;
+            sidebarWorkspaceLabel = null;
+            sidebarWorkspaceButtons[0] = null;
+            sidebarWorkspaceButtons[1] = null;
+            sidebarWorkspaceButtons[2] = null;
+            sidebarWorkspaceTransition = false;
             lastPopupSidebarFingerprint = "";
         });
         lastPopupSidebarFingerprint = sidebarFingerprint();
@@ -2499,7 +2576,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         overlay.setBackgroundColor(Color.TRANSPARENT);
 
         sidebarScrim = new View(this);
-        sidebarScrim.setBackgroundColor(0x99000000);
+        sidebarScrim.setBackgroundColor(ZenTheme.sidebarScrim(this));
         sidebarScrim.setContentDescription("Cerrar panel");
         sidebarScrim.setOnClickListener(v -> dismissSidebarPopup());
         overlay.addView(sidebarScrim, new FrameLayout.LayoutParams(
@@ -2561,6 +2638,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         sidebarPanelHost = null;
         sidebarScrim = null;
         sidebarAnimatedPanel = null;
+        sidebarTabsHost = null;
+        sidebarWorkspaceLabel = null;
+        sidebarWorkspaceButtons[0] = null;
+        sidebarWorkspaceButtons[1] = null;
+        sidebarWorkspaceButtons[2] = null;
+        sidebarWorkspaceTransition = false;
     }
 
     private void openNewTabFromSidebar(View trigger) {
@@ -2618,7 +2701,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         FrameLayout overlay = new FrameLayout(this);
         overlay.setBackgroundColor(Color.TRANSPARENT);
         View scrim = new View(this);
-        scrim.setBackgroundColor(0xC20D0E12);
+        scrim.setBackgroundColor(ZenTheme.searchScrim(this));
         scrim.setOnClickListener(v -> dismissSearchPopup());
         overlay.addView(scrim, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -2696,7 +2779,11 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         searchInput.setOnEditorActionListener((v, actionId, event) -> {
             boolean enter = event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER
                     && event.getAction() == KeyEvent.ACTION_DOWN;
-            if (actionId == EditorInfo.IME_ACTION_GO || enter) {
+            boolean submit = actionId == EditorInfo.IME_ACTION_SEARCH
+                    || actionId == EditorInfo.IME_ACTION_GO
+                    || actionId == EditorInfo.IME_ACTION_DONE
+                    || actionId == EditorInfo.IME_ACTION_UNSPECIFIED;
+            if (submit || enter) {
                 submitSearch(searchInput.getText().toString());
                 return true;
             }
@@ -2710,7 +2797,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         panel.setTranslationY(-dp(14));
         panel.animate().alpha(1f).translationY(0f).setDuration(190)
                 .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
-        showKeyboard(searchInput);
+        searchInput.post(() -> {
+            if (searchInput == null || searchPopup == null
+                    || !searchPopup.isShowing()) return;
+            searchInput.requestFocus();
+            showKeyboard(searchInput);
+        });
     }
 
     private TextView createSearchEngineButton() {
@@ -3174,42 +3266,46 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void switchWorkspaceWithSlide(String workspaceId) {
-        if (workspaceId == null || workspaceId.equals(browser.getActiveWorkspaceId())) return;
+        if (workspaceId == null || workspaceId.equals(browser.getActiveWorkspaceId())
+                || sidebarWorkspaceTransition) return;
         int from = workspacePosition(browser.getActiveWorkspaceId());
         int to = workspacePosition(workspaceId);
         int direction = to >= from ? 1 : -1;
-
-        View current = sidebarPanelHost == null || sidebarPanelHost.getChildCount() == 0
-                ? null : sidebarPanelHost.getChildAt(0);
-        if (current == null || !ZenPanelController.animationsEnabled(this)) {
-            animateWebTransition(() -> {
-                browser.switchWorkspace(workspaceId);
-                refreshSidebarPopup();
-            });
+        View tabs = sidebarTabsHost;
+        if (tabs == null) {
+            animateWebTransition(() -> browser.switchWorkspace(workspaceId));
             return;
         }
 
-        current.animate().cancel();
-        current.animate()
-                .translationX(-direction * dp(30))
+        sidebarWorkspaceTransition = true;
+        Runnable change = () -> {
+            browser.switchWorkspace(workspaceId);
+            populateSidebarTabs();
+            updateSidebarWorkspaceChrome();
+            lastPopupSidebarFingerprint = sidebarFingerprint();
+            tabs.setTranslationX(direction * dp(16));
+            tabs.setAlpha(0f);
+            tabs.animate()
+                    .translationX(0f)
+                    .alpha(1f)
+                    .setDuration(155L)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                    .withEndAction(() -> sidebarWorkspaceTransition = false)
+                    .start();
+        };
+
+        if (!ZenPanelController.animationsEnabled(this)) {
+            animateWebTransition(change);
+            mainHandler.postDelayed(() -> sidebarWorkspaceTransition = false, 220L);
+            return;
+        }
+
+        tabs.animate().cancel();
+        tabs.animate()
+                .translationX(-direction * dp(14))
                 .alpha(0f)
-                .setDuration(85L)
-                .withEndAction(() -> animateWebTransition(() -> {
-                    browser.switchWorkspace(workspaceId);
-                    refreshSidebarPopup();
-                    View next = sidebarPanelHost == null || sidebarPanelHost.getChildCount() == 0
-                            ? null : sidebarPanelHost.getChildAt(0);
-                    if (next != null) {
-                        next.setTranslationX(direction * dp(30));
-                        next.setAlpha(0f);
-                        next.animate()
-                                .translationX(0f)
-                                .alpha(1f)
-                                .setDuration(170L)
-                                .setInterpolator(new android.view.animation.DecelerateInterpolator())
-                                .start();
-                    }
-                }))
+                .setDuration(75L)
+                .withEndAction(() -> animateWebTransition(change))
                 .start();
     }
 
@@ -3222,7 +3318,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private TextView createZenKey() {
-        TextView key = text("Z", 36, R.color.zen_bg);
+        TextView key = text("Z", 36, R.color.zen_key_text);
         key.setTypeface(Typeface.DEFAULT_BOLD);
         key.setGravity(Gravity.CENTER);
         key.setBackgroundResource(R.drawable.bg_zen_key);
@@ -3363,7 +3459,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         if (homeBackgroundView == null) return;
 
         boolean showBackground =
-                ZenPanelController.homeBackgroundEnabled(this);
+                ZenPanelController.homeBackgroundEnabled(this)
+                        && !ZenTheme.isDay(this);
         homeBackgroundView.setVisibility(
                 showBackground ? View.VISIBLE : View.GONE);
         if (homeBackgroundScrim != null) {
@@ -4344,6 +4441,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 applyResponsiveLayout(getResources().getConfiguration());
             }
             if (sidebarPopup != null && sidebarPopup.isShowing()
+                    && !sidebarWorkspaceTransition
                     && !fingerprint.equals(lastPopupSidebarFingerprint)) {
                 refreshSidebarPopup();
             }

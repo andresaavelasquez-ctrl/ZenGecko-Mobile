@@ -1450,7 +1450,7 @@ public final class ZenPanelController {
         overlay.setBackgroundColor(Color.TRANSPARENT);
 
         View scrim = new View(activity);
-        scrim.setBackgroundColor(0xB8000000);
+        scrim.setBackgroundColor(ZenTheme.panelScrim(activity));
         overlay.addView(scrim, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));

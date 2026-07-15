@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <gradient android:angle="315" android:startColor="#17121E" android:endColor="#09090D" />
-    <corners android:radius="20dp" />
-    <stroke android:width="1dp" android:color="#4B395F" />
-    <padding android:left="14dp" android:top="12dp" android:right="14dp" android:bottom="12dp" />
+    <solid android:color="@color/zen_surface" />
+    <corners android:radius="22dp" />
+    <stroke android:width="1dp" android:color="@color/zen_border" />
 </shape>
