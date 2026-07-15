@@ -494,7 +494,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             return;
         }
         if (browser != null && browser.selectPreviousTab()) {
-            recoverVisibleSurface();
+            recoverVisibleSurface("back-navigation", true);
             return;
         }
         confirmExitApplication();
