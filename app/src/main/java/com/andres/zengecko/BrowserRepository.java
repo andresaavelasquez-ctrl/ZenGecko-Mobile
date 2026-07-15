@@ -3,8 +3,8 @@ package com.andres.zengecko;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.Uri;
-import android.os.Handler;
-import android.os.Looper;
+import android.os.SystemClock;
+import android.util.Log;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -22,6 +22,9 @@ import com.andres.zengecko.model.BrowserTab;
 import com.andres.zengecko.model.Workspace;
 
 public final class BrowserRepository {
+    private static final String TAG = "ZenGecko/Browser";
+    private static final long BLANK_TAB_GUARD_MS = 650L;
+
     public interface Observer {
         void onBrowserStateChanged();
         default void onFullScreenChanged(GeckoSession session, boolean fullScreen) { }
@@ -79,8 +82,7 @@ public final class BrowserRepository {
     private SearchEngine searchEngine = SearchEngine.DUCKDUCKGO;
     private ClosedTab lastClosedTab;
     private boolean appForeground = true;
-    private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private int sessionActivityGeneration;
+    private long lastBlankTabRequestAt;
 
     private BrowserRepository(Context context) {
         this.context = context.getApplicationContext();
@@ -181,7 +183,26 @@ public final class BrowserRepository {
 
     public BrowserTab addTab(String rawUrl, boolean select) {
         String url = normalizeInput(rawUrl);
-        BrowserTab tab = new BrowserTab(UUID.randomUUID().toString(), activeWorkspaceId, "Nueva pestaña", url);
+        if (select && "about:blank".equals(url)) {
+            BrowserTab active = getActiveTab();
+            if (active != null && active.id.equals(activeTabId) && isDisposableBlank(active)) {
+                ensureSession(active, true);
+                updateSessionActivity();
+                notifyObservers();
+                Log.d(TAG, "Reused active blank tab " + active.id);
+                return active;
+            }
+
+            long now = SystemClock.elapsedRealtime();
+            if (active != null && now - lastBlankTabRequestAt < BLANK_TAB_GUARD_MS) {
+                Log.w(TAG, "Ignored duplicate blank-tab request");
+                return active;
+            }
+            lastBlankTabRequestAt = now;
+        }
+
+        BrowserTab tab = new BrowserTab(
+                UUID.randomUUID().toString(), activeWorkspaceId, "Nueva pestaña", url);
         tab.desktopMode = ZenPanelController.desktopModeDefault(context);
         tabs.add(tab);
         if (select) activeTabId = tab.id;
@@ -341,13 +362,16 @@ public final class BrowserRepository {
                 if (tab.id.equals(activeTabId)) notifyDownload(response);
             }
             @Override public void onPaintStatusReset(GeckoSession source) {
+                Log.i(TAG, "onPaintStatusReset tab=" + tab.id);
                 tab.hasValidPaint = false;
                 if (tab.id.equals(activeTabId)) notifyPaintStatusReset(source);
             }
             @Override public void onFirstComposite(GeckoSession source) {
+                Log.i(TAG, "onFirstComposite tab=" + tab.id);
                 if (tab.id.equals(activeTabId)) notifyFirstComposite(source);
             }
             @Override public void onFirstContentfulPaint(GeckoSession source) {
+                Log.i(TAG, "onFirstContentfulPaint tab=" + tab.id);
                 tab.hasValidPaint = true;
                 if (tab.id.equals(activeTabId)) notifyFirstContentfulPaint(source);
             }
@@ -411,6 +435,7 @@ public final class BrowserRepository {
 
         session.setProgressDelegate(new GeckoSession.ProgressDelegate() {
             @Override public void onPageStart(GeckoSession source, String url) {
+                Log.i(TAG, "onPageStart tab=" + tab.id + " url=" + url);
                 boolean hadValidPaint = tab.hasValidPaint;
                 tab.navigationSerial++;
                 tab.loading = true;
@@ -429,6 +454,7 @@ public final class BrowserRepository {
                 }
             }
             @Override public void onPageStop(GeckoSession source, boolean success) {
+                Log.i(TAG, "onPageStop tab=" + tab.id + " success=" + success);
                 tab.loading = false;
                 tab.progress = 100;
                 recordRecentUrl(tab.url);
@@ -472,27 +498,15 @@ public final class BrowserRepository {
     }
 
     private void updateSessionActivity() {
-        final int generation = ++sessionActivityGeneration;
-        final String selectedId = activeTabId;
         for (BrowserTab item : tabs) {
             if (item.session == null || !item.session.isOpen()) continue;
-            if (item.id.equals(selectedId)) {
-                try {
-                    item.session.setActive(appForeground);
-                } catch (RuntimeException ignored) { }
+            boolean active = appForeground && item.id.equals(activeTabId);
+            try {
+                item.session.setActive(active);
+            } catch (RuntimeException error) {
+                Log.w(TAG, "Unable to set session activity for tab " + item.id, error);
             }
         }
-
-        mainHandler.postDelayed(() -> {
-            if (generation != sessionActivityGeneration) return;
-            for (BrowserTab item : tabs) {
-                if (item.session == null || !item.session.isOpen()) continue;
-                boolean active = appForeground && item.id.equals(activeTabId);
-                try {
-                    item.session.setActive(active);
-                } catch (RuntimeException ignored) { }
-            }
-        }, 280L);
     }
 
 
@@ -535,6 +549,26 @@ public final class BrowserRepository {
             return new URI(pageUrl).resolve(selected).toString();
         } catch (Exception ignored) {
             return selected;
+        }
+    }
+
+    private void collapseDuplicateBlankTabs() {
+        for (int index = 0; index < tabs.size(); index++) {
+            BrowserTab keeper = tabs.get(index);
+            if (!isDisposableBlank(keeper)) continue;
+            for (int other = tabs.size() - 1; other > index; other--) {
+                BrowserTab candidate = tabs.get(other);
+                if (!keeper.workspaceId.equals(candidate.workspaceId)
+                        || !isDisposableBlank(candidate)) {
+                    continue;
+                }
+                if (candidate.id.equals(activeTabId)) activeTabId = keeper.id;
+                if (candidate.session != null && candidate.session.isOpen()) {
+                    try { candidate.session.close(); } catch (RuntimeException ignored) { }
+                }
+                tabs.remove(other);
+                Log.w(TAG, "Removed duplicate blank tab " + candidate.id);
+            }
         }
     }
 
@@ -647,6 +681,7 @@ public final class BrowserRepository {
         ensureDefaultWorkspace("education", "Educación");
 
         if (findWorkspace(activeWorkspaceId) == null) activeWorkspaceId = "personal";
+        collapseDuplicateBlankTabs();
         for (BrowserTab tab : tabs) {
             if (findWorkspace(tab.workspaceId) == null) tab.workspaceId = "personal";
         }

@@ -171,3 +171,17 @@
 - Mejora la retención de superficie durante navegación y cambios de pestaña.
 - Reduce y contiene el aviso visual de descargas.
 - Endurece la carga asíncrona de imágenes frente a vistas destruidas.
+
+## 0.1.15 — Surface Recovery & Downloads
+
+- Introduce una máquina de estados de renderizado verificable.
+- Reactiva de forma determinista GeckoSession, GeckoView y el compositor.
+- Detecta superficies uniformes negras, grises o blancas y ejecuta recuperación acotada.
+- Evita retirar la captura anterior hasta confirmar una superficie válida.
+- Elimina pestañas vacías duplicadas y bloquea dobles pulsaciones.
+- Libera inmediatamente las capturas de transición.
+- Reduce y limita cachés visuales y temporales sin borrar automáticamente toda la caché web.
+- Compacta las tarjetas y la notificación de descargas.
+- Añade soporte controlado para URI data: y mensajes claros para esquemas incompatibles.
+- Añade trazas de onPageStart, onFirstComposite, onFirstContentfulPaint, onPageStop, onPause y onResume.
+- Artefacto esperado: `ZenBrowser-v0.1.15-debug`.

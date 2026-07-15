@@ -29,8 +29,10 @@ public final class ContextMediaStore {
         void onError(Throwable error);
     }
 
-    private static final long MAX_BYTES = 48L * 1024L * 1024L;
-    private static final long CACHE_LIMIT = 80L * 1024L * 1024L;
+    private static final long MAX_BYTES = 32L * 1024L * 1024L;
+    private static final long CACHE_LIMIT = 24L * 1024L * 1024L;
+    private static final long MAX_AGE_MS = 12L * 60L * 60L * 1000L;
+    private static final long RELEASE_DELAY_MS = 15L * 60L * 1000L;
     private static final ExecutorService IO = Executors.newFixedThreadPool(2);
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
@@ -72,6 +74,7 @@ public final class ContextMediaStore {
         intent.putExtra(Intent.EXTRA_STREAM, uri);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         activity.startActivity(Intent.createChooser(intent, "Compartir"));
+        releaseLater(file);
     }
 
     public static void copy(Activity activity, File file, String mime) {
@@ -83,6 +86,27 @@ public final class ContextMediaStore {
         clipboard.setPrimaryClip(clip);
         activity.grantUriPermission(
                 activity.getPackageName(), uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        releaseLater(file);
+    }
+
+    public static void trimNow(Context context) {
+        if (context == null) return;
+        Context app = context.getApplicationContext();
+        IO.execute(() -> trim(new File(app.getCacheDir(), "context-media")));
+    }
+
+    public static void clear(Context context) {
+        if (context == null) return;
+        File directory = new File(context.getApplicationContext().getCacheDir(), "context-media");
+        IO.execute(() -> deleteRecursively(directory));
+    }
+
+    private static void releaseLater(File file) {
+        if (file == null) return;
+        MAIN.postDelayed(() -> {
+            try { if (file.exists()) file.delete(); }
+            catch (SecurityException ignored) { }
+        }, RELEASE_DELAY_MS);
     }
 
     public static Uri uri(Context context, File file) {
@@ -166,7 +190,23 @@ public final class ContextMediaStore {
     }
 
     private static void trim(File directory) {
-        File[] files = directory.listFiles(file -> file.isFile() && !file.getName().endsWith(".part"));
+        if (directory == null || !directory.isDirectory()) return;
+        File[] all = directory.listFiles();
+        if (all == null) return;
+        long now = System.currentTimeMillis();
+        for (File file : all) {
+            if (!file.isFile()) continue;
+            boolean stalePart = file.getName().endsWith(".part")
+                    && now - file.lastModified() > 15L * 60L * 1000L;
+            boolean staleAsset = !file.getName().endsWith(".part")
+                    && now - file.lastModified() > MAX_AGE_MS;
+            if (stalePart || staleAsset) {
+                try { file.delete(); } catch (SecurityException ignored) { }
+            }
+        }
+
+        File[] files = directory.listFiles(file ->
+                file.isFile() && !file.getName().endsWith(".part"));
         if (files == null) return;
         long total = 0L;
         for (File file : files) total += file.length();
@@ -178,6 +218,17 @@ public final class ContextMediaStore {
             long length = file.length();
             if (file.delete()) total -= length;
         }
+    }
+
+    private static void deleteRecursively(File file) {
+        if (file == null || !file.exists()) return;
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) deleteRecursively(child);
+            }
+        }
+        try { file.delete(); } catch (SecurityException ignored) { }
     }
 
     private static String digest(String value) {

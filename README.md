@@ -1,4 +1,4 @@
-# Zen Browser v0.1.13 — Fluid Navigation & Web Context
+# Zen Browser v0.1.15 — Surface Recovery & Downloads
 
 Zen Browser para Android basado en **GeckoView real**, con interfaz AMOLED, espacios de navegación y administración de pestañas.
 
@@ -136,14 +136,14 @@ El menú usa un panel inferior en vertical y un panel compacto cercano al punto 
 ## Versión
 
 ```text
-versionCode 14
-versionName 0.1.13
+versionCode 16
+versionName 0.1.15
 ```
 
 Artefacto esperado:
 
 ```text
-ZenBrowser-v0.1.13-debug
+ZenBrowser-v0.1.15-debug
 ```
 
 ## Compilación
@@ -197,3 +197,19 @@ El código original del proyecto se entrega bajo MPL-2.0. GeckoView y AndroidX c
 - La barra de descarga queda contenida dentro de la tarjeta.
 - Añade registros defensivos para menús, vistas previas y cambios de sesión.
 - Artefacto esperado: `ZenBrowser-v0.1.14-debug`.
+
+## v0.1.15 — Surface Recovery & Downloads
+
+Esta versión no incorpora funciones nuevas de navegación. Está dedicada a estabilidad y acabado:
+
+- una sola `GeckoSession` queda activa;
+- las superficies se verifican mediante captura antes de retirar cubiertas;
+- una superficie uniforme atascada provoca una reanexión limitada, sin recargar la página;
+- las pestañas vacías duplicadas quedan bloqueadas y se limpian al restaurar sesión;
+- las capturas se reciclan al confirmar contenido visible;
+- las cachés personalizadas se limitan y limpian por antigüedad;
+- tarjetas y aviso de descarga son más compactos;
+- las descargas `data:` compatibles se procesan internamente;
+- los esquemas no descargables muestran un error legible.
+
+Artefacto esperado: `ZenBrowser-v0.1.15-debug`.

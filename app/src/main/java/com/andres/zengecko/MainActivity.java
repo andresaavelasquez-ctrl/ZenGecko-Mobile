@@ -22,6 +22,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextUtils;
@@ -69,6 +70,18 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private static final String TAG = "ZenGecko/Main";
     private static final long TAB_FADE_OUT_MS = 85L;
     private static final long TAB_FADE_IN_MS = 150L;
+    private static final long NEW_TAB_GUARD_MS = 650L;
+    private static final long SURFACE_PROBE_DELAY_MS = 240L;
+    private static final int MAX_SURFACE_RECOVERY_ATTEMPTS = 3;
+
+    private enum RenderPhase {
+        IDLE,
+        NETWORK_STARTED,
+        WAITING_FOR_COMPOSITE,
+        FIRST_COMPOSITE,
+        FIRST_CONTENTFUL_PAINT,
+        VISIBLE
+    }
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -136,6 +149,15 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private AlertDialog contextPreviewDialog;
     private int contextGeneration;
     private boolean quickEditorOpening;
+    private RenderPhase renderPhase = RenderPhase.IDLE;
+    private GeckoSession renderPhaseSession;
+    private int surfaceProbeGeneration;
+    private Runnable surfaceProbeRunnable;
+    private int surfaceRecoveryAttempts;
+    private long lastNewTabRequestAt;
+    private boolean newTabRequestPending;
+    private Bitmap transitionBitmap;
+    private Runnable sidebarRefreshRunnable;
 
 
     private static final class ContextTarget {
@@ -231,15 +253,17 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     @Override protected void onStart() {
         super.onStart();
+        Log.i(TAG, "onStart");
         if (browser != null) browser.setAppForeground(true);
-        recoverVisibleSurface();
+        recoverVisibleSurface("onStart", true);
     }
 
     @Override protected void onResume() {
         super.onResume();
         activityResumed = true;
+        Log.i(TAG, "onResume phase=" + renderPhase);
         if (browser != null) browser.setAppForeground(true);
-        recoverVisibleSurface();
+        recoverVisibleSurface("onResume", true);
         applyRuntimePreferences();
         render();
         ZenPanelController.maybeTrimCache(this);
@@ -247,11 +271,15 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     @Override protected void onPause() {
+        Log.i(TAG, "onPause phase=" + renderPhase);
         activityResumed = false;
+        cancelSurfaceProbe();
+        if (browser != null) browser.setAppForeground(false);
         super.onPause();
     }
 
     @Override protected void onStop() {
+        Log.i(TAG, "onStop");
         if (browser != null) browser.setAppForeground(false);
         super.onStop();
     }
@@ -262,6 +290,11 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         if (browser != null) browser.removeObserver(this);
         unregisterModernBackCallback();
         cancelPaintGuardTimeout();
+        cancelSurfaceProbe();
+        if (sidebarRefreshRunnable != null) {
+            mainHandler.removeCallbacks(sidebarRefreshRunnable);
+            sidebarRefreshRunnable = null;
+        }
         if (downloadNoticeTicker != null) mainHandler.removeCallbacks(downloadNoticeTicker);
         dismissSearchPopupImmediate();
         dismissSidebarPopupImmediate();
@@ -315,6 +348,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             BrowserTab active = browser == null ? null : browser.getActiveTab();
             if (active == null || active.session != session || active.showStartPage) return;
 
+            setRenderPhase(session, RenderPhase.NETWORK_STARTED, "onPageStart " + url);
+            surfaceRecoveryAttempts = 0;
             startAddressGlow();
             if (hadValidPaint) {
                 captureNavigationSnapshot(session);
@@ -331,6 +366,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     showPaintGuard(session, "");
                 }, 220L);
             }
+            scheduleSurfaceProbe(session, 900L, false, "page-start");
         });
     }
 
@@ -338,7 +374,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         runOnUiThread(() -> {
             BrowserTab active = browser == null ? null : browser.getActiveTab();
             if (active == null || active.session != session) return;
-            if (!success) {
+            Log.i(TAG, "onPageStop success=" + success + " phase=" + renderPhase);
+            if (success) {
+                scheduleSurfaceProbe(session, 180L, true, "page-stop");
+            } else {
                 mainHandler.postDelayed(() -> {
                     BrowserTab current = browser == null ? null : browser.getActiveTab();
                     if (current == null || current.session != session) return;
@@ -346,18 +385,19 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                         hidePaintGuard(session, true);
                         clearTransitionSnapshot();
                         tabTransitionRunning = false;
+                        setRenderPhase(session, RenderPhase.IDLE, "page-stop-failed");
                     }
                 }, 1200L);
             }
         });
     }
 
-
     @Override public void onPaintStatusReset(GeckoSession session) {
         runOnUiThread(() -> {
             BrowserTab active = browser == null ? null : browser.getActiveTab();
             if (active == null || active.session != session) return;
             lastPaintCoverKey = "";
+            setRenderPhase(session, RenderPhase.WAITING_FOR_COMPOSITE, "paint-status-reset");
             if (!activityResumed || active.showStartPage) return;
 
             if (transitionSnapshot == null) {
@@ -372,32 +412,29 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     showPaintGuard(session, "");
                 }, 180L);
             }
+            scheduleSurfaceProbe(session, 520L, false, "paint-reset");
         });
     }
-
 
     @Override public void onFirstComposite(GeckoSession session) {
         runOnUiThread(() -> {
             BrowserTab active = browser == null ? null : browser.getActiveTab();
             if (active == null || active.session != session) return;
-            if (transitionSnapshot != null) {
-                transitionSnapshot.setAlpha(1f);
-            }
+            setRenderPhase(session, RenderPhase.FIRST_COMPOSITE, "first-composite");
+            if (transitionSnapshot != null) transitionSnapshot.setAlpha(1f);
+            scheduleSurfaceProbe(session, 90L, true, "first-composite");
         });
     }
-
 
     @Override public void onFirstContentfulPaint(GeckoSession session) {
         runOnUiThread(() -> {
-            hidePaintGuard(session, false);
-            if (transitionSnapshot != null) {
-                fadeTransitionSnapshot(transitionGeneration);
-            } else {
-                tabTransitionRunning = false;
-            }
+            BrowserTab active = browser == null ? null : browser.getActiveTab();
+            if (active == null || active.session != session) return;
+            setRenderPhase(session, RenderPhase.FIRST_CONTENTFUL_PAINT,
+                    "first-contentful-paint");
+            confirmVisibleSurface(session, "first-contentful-paint");
         });
     }
-
 
     @Override public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
@@ -407,7 +444,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         applyHomePreferences();
         dismissContextMenuImmediate();
         if (appRoot != null) appRoot.requestApplyInsets();
-        recoverVisibleSurface();
+        recoverVisibleSurface("configuration-changed", true);
         render();
     }
 
@@ -501,13 +538,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private void attachSession(GeckoSession session) {
         if (session == null || geckoView == null || displayedSession == session) return;
 
-        try {
-            session.setActive(true);
-        } catch (RuntimeException error) {
-            Log.w(TAG, "Unable to activate target GeckoSession", error);
-        }
-
+        cancelSurfaceProbe();
         GeckoSession previous = displayedSession;
+        Log.i(TAG, "attachSession previous=" + sessionIdentity(previous)
+                + " target=" + sessionIdentity(session));
         try {
             if (previous != null) {
                 GeckoSession released = geckoView.releaseSession();
@@ -515,9 +549,16 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     Log.d(TAG, "Released previous GeckoSession from GeckoView");
                 }
             }
+
             geckoView.setSession(session);
             displayedSession = session;
+            try {
+                session.setActive(activityResumed);
+            } catch (RuntimeException activeError) {
+                Log.w(TAG, "Unable to activate attached GeckoSession", activeError);
+            }
             geckoView.requestLayout();
+            geckoView.invalidate();
             Log.d(TAG, "Attached GeckoSession to GeckoView");
         } catch (RuntimeException error) {
             displayedSession = null;
@@ -526,13 +567,13 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 try {
                     geckoView.setSession(previous);
                     displayedSession = previous;
+                    previous.setActive(activityResumed);
                 } catch (RuntimeException restoreError) {
                     Log.e(TAG, "Unable to restore previous GeckoSession", restoreError);
                 }
             }
         }
     }
-
 
     private void setCurrentSessionActive(boolean active) {
         if (browser != null) browser.setAppForeground(active);
@@ -650,7 +691,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         applySystemBars(true);
         applyResponsiveLayout(getResources().getConfiguration());
         if (appRoot != null) appRoot.requestApplyInsets();
-        recoverVisibleSurface();
+        recoverVisibleSurface("immersive-state", true);
     }
 
     private void applySystemBars(boolean hide) {
@@ -775,16 +816,207 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         if (geckoView != null) geckoView.requestLayout();
     }
 
-    private void recoverVisibleSurface() {
-        if (geckoView == null || browser == null) return;
+    private void recoverVisibleSurface(String reason, boolean verify) {
+        if (geckoView == null || browser == null || !isActivityUsable()) return;
         BrowserTab active = browser.getActiveTab();
         if (active == null || active.session == null) return;
+        Log.i(TAG, "recoverVisibleSurface reason=" + reason
+                + " session=" + sessionIdentity(active.session)
+                + " phase=" + renderPhase
+                + " painted=" + active.hasValidPaint);
         try {
             if (displayedSession != active.session) attachSession(active.session);
+            active.session.setActive(activityResumed);
             geckoView.requestLayout();
+            geckoView.invalidate();
+            if (verify && activityResumed && !active.showStartPage) {
+                scheduleSurfaceProbe(active.session, 160L, active.hasValidPaint,
+                        "recover-" + reason);
+            }
         } catch (RuntimeException error) {
             Log.w(TAG, "Unable to restore the active Gecko session", error);
         }
+    }
+
+    private void setRenderPhase(
+            GeckoSession session,
+            RenderPhase next,
+            String reason) {
+        if (session == null || next == null) return;
+        RenderPhase previous = renderPhaseSession == session ? renderPhase : RenderPhase.IDLE;
+        renderPhaseSession = session;
+        renderPhase = next;
+        Log.i(TAG, "renderPhase " + previous + " -> " + next
+                + " reason=" + reason
+                + " session=" + sessionIdentity(session));
+    }
+
+    private String sessionIdentity(GeckoSession session) {
+        return session == null ? "none"
+                : Integer.toHexString(System.identityHashCode(session));
+    }
+
+    private void cancelSurfaceProbe() {
+        surfaceProbeGeneration++;
+        if (surfaceProbeRunnable != null) {
+            mainHandler.removeCallbacks(surfaceProbeRunnable);
+            surfaceProbeRunnable = null;
+        }
+    }
+
+    private void scheduleSurfaceProbe(
+            GeckoSession session,
+            long delayMs,
+            boolean allowReveal,
+            String reason) {
+        if (session == null || geckoView == null || !activityResumed) return;
+        cancelSurfaceProbe();
+        final int generation = surfaceProbeGeneration;
+        surfaceProbeRunnable = () -> {
+            surfaceProbeRunnable = null;
+            if (generation != surfaceProbeGeneration
+                    || !activityResumed
+                    || displayedSession != session
+                    || geckoView == null) {
+                return;
+            }
+            BrowserTab active = browser == null ? null : browser.getActiveTab();
+            if (active == null || active.session != session || active.showStartPage) return;
+
+            Log.d(TAG, "surfaceProbe reason=" + reason
+                    + " attempt=" + surfaceRecoveryAttempts
+                    + " phase=" + renderPhase);
+            try {
+                geckoView.capturePixels()
+                        .withHandler(mainHandler)
+                        .accept(bitmap -> {
+                            if (generation != surfaceProbeGeneration) {
+                                recycleBitmap(bitmap);
+                                return;
+                            }
+                            boolean blank = isLikelyBlankFrame(bitmap);
+                            recycleBitmap(bitmap);
+                            BrowserTab current = browser == null ? null : browser.getActiveTab();
+                            if (current == null || current.session != session) return;
+
+                            if (!blank) {
+                                confirmVisibleSurface(session, "pixel-probe-" + reason);
+                                return;
+                            }
+
+                            Log.w(TAG, "Surface probe detected a uniform frame; reason=" + reason
+                                    + " attempt=" + surfaceRecoveryAttempts);
+                            if (current.loading
+                                    && renderPhase == RenderPhase.NETWORK_STARTED
+                                    && surfaceRecoveryAttempts == 0) {
+                                scheduleSurfaceProbe(session, 700L, allowReveal,
+                                        reason + "-network-wait");
+                                return;
+                            }
+                            attemptSurfaceRecovery(session, allowReveal, reason);
+                        }, error -> {
+                            if (generation != surfaceProbeGeneration) return;
+                            Log.w(TAG, "Surface probe failed; reason=" + reason, error);
+                            attemptSurfaceRecovery(session, allowReveal, reason + "-capture-error");
+                        });
+            } catch (RuntimeException error) {
+                Log.w(TAG, "Unable to capture Gecko surface", error);
+                attemptSurfaceRecovery(session, allowReveal, reason + "-capture-throw");
+            }
+        };
+        mainHandler.postDelayed(surfaceProbeRunnable, Math.max(0L, delayMs));
+    }
+
+    private void attemptSurfaceRecovery(
+            GeckoSession session,
+            boolean allowReveal,
+            String reason) {
+        if (session == null || geckoView == null || displayedSession != session) return;
+        BrowserTab active = browser == null ? null : browser.getActiveTab();
+        if (active == null || active.session != session) return;
+
+        surfaceRecoveryAttempts++;
+        Log.w(TAG, "Surface recovery attempt=" + surfaceRecoveryAttempts
+                + " reason=" + reason
+                + " phase=" + renderPhase);
+        showPaintGuard(session, "");
+
+        try {
+            GeckoSession released = geckoView.releaseSession();
+            displayedSession = null;
+            geckoView.setSession(session);
+            displayedSession = session;
+            session.setActive(activityResumed);
+            geckoView.requestLayout();
+            geckoView.invalidate();
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Unable to rebind Gecko surface", error);
+        }
+
+        if (surfaceRecoveryAttempts >= MAX_SURFACE_RECOVERY_ATTEMPTS) {
+            geckoView.setVisibility(View.INVISIBLE);
+            geckoView.post(() -> {
+                if (geckoView == null || displayedSession != session) return;
+                geckoView.setVisibility(View.VISIBLE);
+                geckoView.requestLayout();
+                geckoView.invalidate();
+                if (allowReveal || active.hasValidPaint) {
+                    mainHandler.postDelayed(() ->
+                            confirmVisibleSurface(session, "recovery-limit"), 260L);
+                }
+            });
+            return;
+        }
+
+        setRenderPhase(session, RenderPhase.WAITING_FOR_COMPOSITE,
+                "surface-rebind-" + reason);
+        scheduleSurfaceProbe(session, SURFACE_PROBE_DELAY_MS, allowReveal,
+                reason + "-retry");
+    }
+
+    private void confirmVisibleSurface(GeckoSession session, String reason) {
+        BrowserTab active = browser == null ? null : browser.getActiveTab();
+        if (active == null || active.session != session || active.showStartPage) return;
+        cancelSurfaceProbe();
+        surfaceRecoveryAttempts = 0;
+        setRenderPhase(session, RenderPhase.VISIBLE, reason);
+        hidePaintGuard(session, false);
+        if (transitionSnapshot != null) fadeTransitionSnapshot(transitionGeneration);
+        else tabTransitionRunning = false;
+    }
+
+    private boolean isLikelyBlankFrame(Bitmap bitmap) {
+        if (bitmap == null || bitmap.isRecycled()
+                || bitmap.getWidth() < 2 || bitmap.getHeight() < 2) {
+            return true;
+        }
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        int min = 255;
+        int max = 0;
+        long total = 0L;
+        int samples = 0;
+        for (int row = 1; row <= 5; row++) {
+            int y = Math.min(height - 1, row * height / 6);
+            for (int column = 1; column <= 5; column++) {
+                int x = Math.min(width - 1, column * width / 6);
+                int color = bitmap.getPixel(x, y);
+                int luminance = (Color.red(color) * 2126
+                        + Color.green(color) * 7152
+                        + Color.blue(color) * 722) / 10000;
+                min = Math.min(min, luminance);
+                max = Math.max(max, luminance);
+                total += luminance;
+                samples++;
+            }
+        }
+        int average = samples == 0 ? 0 : (int) (total / samples);
+        return max - min <= 7 && (average <= 96 || average >= 238);
+    }
+
+    private void recycleBitmap(Bitmap bitmap) {
+        if (bitmap == null || bitmap.isRecycled()) return;
+        try { bitmap.recycle(); } catch (RuntimeException ignored) { }
     }
 
     private FrameLayout createPaintGuard() {
@@ -964,7 +1196,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         bar.addView(sidebarButton, square(34));
 
         ImageButton newTab = toolbarButton(R.drawable.ic_add, "Nueva pestaña");
-        newTab.setOnClickListener(v -> openNewTabAndSearch());
+        newTab.setOnClickListener(this::openNewTabAndSearch);
         bar.addView(newTab, square(32));
 
         backButton = toolbarButton(R.drawable.ic_back, "Atrás");
@@ -1213,7 +1445,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         ImageButton add = iconButton(R.drawable.ic_add, "Nueva pestaña");
-        add.setOnClickListener(v -> openNewTabAndSearch());
+        add.setOnClickListener(this::openNewTabAndSearch);
         rail.addView(add, new LinearLayout.LayoutParams(dp(42), dp(42)));
 
         ImageButton expand = iconButton(R.drawable.ic_menu, "Abrir pestañas");
@@ -1454,7 +1686,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         newTab.setGravity(Gravity.CENTER_VERTICAL);
         newTab.setPadding(dp(12), 0, dp(12), 0);
         newTab.setBackgroundResource(R.drawable.bg_button);
-        newTab.setOnClickListener(v -> openNewTabFromSidebar());
+        newTab.setOnClickListener(this::openNewTabFromSidebar);
         LinearLayout.LayoutParams newTabParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(40));
         newTabParams.setMargins(0, dp(2), 0, dp(3));
@@ -2227,11 +2459,24 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     private void refreshSidebarPopup() {
         if (sidebarPopup == null || !sidebarPopup.isShowing() || sidebarPanelHost == null) return;
-        sidebarPanelHost.removeAllViews();
-        sidebarPanelHost.addView(createSidebar(), new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        sidebarPopup.update();
-        lastPopupSidebarFingerprint = sidebarFingerprint();
+        if (sidebarRefreshRunnable != null) {
+            mainHandler.removeCallbacks(sidebarRefreshRunnable);
+        }
+        final PopupWindow expectedPopup = sidebarPopup;
+        sidebarRefreshRunnable = () -> {
+            sidebarRefreshRunnable = null;
+            if (sidebarPopup != expectedPopup
+                    || !expectedPopup.isShowing()
+                    || sidebarPanelHost == null) {
+                return;
+            }
+            sidebarPanelHost.removeAllViews();
+            sidebarPanelHost.addView(createSidebar(), new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            expectedPopup.update();
+            lastPopupSidebarFingerprint = sidebarFingerprint();
+        };
+        mainHandler.postDelayed(sidebarRefreshRunnable, 32L);
     }
 
     private void dismissSidebarPopup() {
@@ -2257,15 +2502,47 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         sidebarAnimatedPanel = null;
     }
 
-    private void openNewTabFromSidebar() {
+    private void openNewTabFromSidebar(View trigger) {
+        if (reuseActiveBlankTabForSearch(true)) return;
+        if (!acquireNewTabRequest(trigger)) return;
         browser.addTab("about:blank", true);
         dismissSidebarPopup();
-        mainHandler.postDelayed(() -> showSearchPopup(true), 190);
+        mainHandler.postDelayed(() -> showSearchPopup(true), 190L);
     }
 
-    private void openNewTabAndSearch() {
+    private void openNewTabAndSearch(View trigger) {
+        if (reuseActiveBlankTabForSearch(false)) return;
+        if (!acquireNewTabRequest(trigger)) return;
         animateWebTransition(() -> browser.addTab("about:blank", true));
-        mainHandler.postDelayed(() -> showSearchPopup(true), 250);
+        mainHandler.postDelayed(() -> showSearchPopup(true), 250L);
+    }
+
+    private boolean reuseActiveBlankTabForSearch(boolean closeSidebar) {
+        BrowserTab active = browser == null ? null : browser.getActiveTab();
+        boolean blank = active != null
+                && active.showStartPage
+                && (active.url == null || "about:blank".equals(active.url));
+        if (!blank) return false;
+        Log.d(TAG, "Reusing active blank tab instead of creating a duplicate");
+        if (closeSidebar) dismissSidebarPopup();
+        mainHandler.postDelayed(() -> showSearchPopup(true), closeSidebar ? 190L : 40L);
+        return true;
+    }
+
+    private boolean acquireNewTabRequest(View trigger) {
+        long now = SystemClock.elapsedRealtime();
+        if (newTabRequestPending || now - lastNewTabRequestAt < NEW_TAB_GUARD_MS) {
+            Log.d(TAG, "Ignored duplicated new-tab request");
+            return false;
+        }
+        lastNewTabRequestAt = now;
+        newTabRequestPending = true;
+        if (trigger != null) trigger.setEnabled(false);
+        mainHandler.postDelayed(() -> {
+            newTabRequestPending = false;
+            if (trigger != null && trigger.isAttachedToWindow()) trigger.setEnabled(true);
+        }, NEW_TAB_GUARD_MS + 70L);
+        return true;
     }
 
     private void showSearchPopup(boolean newTabMode) {
@@ -2686,6 +2963,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     .withHandler(mainHandler)
                     .accept(bitmap -> {
                         if (generation != transitionGeneration) {
+                            recycleBitmap(bitmap);
                             tabTransitionRunning = false;
                             return;
                         }
@@ -2736,9 +3014,13 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             geckoView.capturePixels()
                     .withHandler(mainHandler)
                     .accept(bitmap -> {
-                        if (generation != transitionGeneration) return;
+                        if (generation != transitionGeneration) {
+                            recycleBitmap(bitmap);
+                            return;
+                        }
                         BrowserTab active = browser == null ? null : browser.getActiveTab();
                         if (active == null || active.session != session || active.hasValidPaint) {
+                            recycleBitmap(bitmap);
                             tabTransitionRunning = false;
                             return;
                         }
@@ -2757,6 +3039,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private void showTransitionSnapshot(Bitmap bitmap) {
         clearTransitionSnapshot();
         if (bitmap == null || bitmap.isRecycled() || webHost == null) return;
+        transitionBitmap = bitmap;
         transitionSnapshot = new ImageView(this);
         transitionSnapshot.setScaleType(ImageView.ScaleType.FIT_XY);
         transitionSnapshot.setImageBitmap(bitmap);
@@ -2786,13 +3069,19 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void clearTransitionSnapshot() {
-        if (transitionSnapshot == null) return;
-        transitionSnapshot.animate().cancel();
-        ViewParent parent = transitionSnapshot.getParent();
-        if (parent instanceof ViewGroup) {
-            ((ViewGroup) parent).removeView(transitionSnapshot);
-        }
+        ImageView snapshot = transitionSnapshot;
+        Bitmap bitmap = transitionBitmap;
         transitionSnapshot = null;
+        transitionBitmap = null;
+        if (snapshot != null) {
+            snapshot.animate().cancel();
+            snapshot.setImageDrawable(null);
+            ViewParent parent = snapshot.getParent();
+            if (parent instanceof ViewGroup) {
+                ((ViewGroup) parent).removeView(snapshot);
+            }
+        }
+        recycleBitmap(bitmap);
     }
 
     private void runFallbackTransition(Runnable change, int generation) {
@@ -3521,6 +3810,11 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             String name,
             String mime) {
         dismissContextMenuImmediate();
+        String validation = DownloadStore.validationMessage(url);
+        if (!validation.isEmpty()) {
+            Toast.makeText(this, validation, Toast.LENGTH_LONG).show();
+            return;
+        }
         DownloadStore.Record record = DownloadStore.enqueueUrl(
                 this, url, referrer, name, mime);
         if (record == null) {
@@ -3635,7 +3929,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         LinearLayout body = new LinearLayout(this);
         body.setGravity(Gravity.CENTER_VERTICAL);
-        body.setPadding(dp(9), dp(6), dp(9), dp(8));
+        body.setPadding(dp(8), dp(4), dp(8), dp(7));
 
         FrameLayout iconShell = new FrameLayout(this);
         iconShell.setBackgroundResource(R.drawable.bg_download_icon_glow);
@@ -3644,32 +3938,32 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         icon.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_accent)));
         icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         iconShell.addView(icon, new FrameLayout.LayoutParams(
-                dp(21), dp(21), Gravity.CENTER));
-        body.addView(iconShell, new LinearLayout.LayoutParams(dp(38), dp(38)));
+                dp(18), dp(18), Gravity.CENTER));
+        body.addView(iconShell, new LinearLayout.LayoutParams(dp(32), dp(32)));
 
         LinearLayout center = new LinearLayout(this);
         center.setOrientation(LinearLayout.VERTICAL);
         center.setGravity(Gravity.CENTER_VERTICAL);
-        center.setPadding(dp(9), 0, dp(5), 0);
+        center.setPadding(dp(7), 0, dp(4), 0);
 
-        TextView title = text("Iniciando descarga…", 12, R.color.zen_text);
+        TextView title = text("Iniciando descarga…", 11, R.color.zen_text);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setSingleLine(true);
         title.setEllipsize(TextUtils.TruncateAt.MIDDLE);
 
-        TextView details = text("Preparando archivo", 9, R.color.zen_muted);
+        TextView details = text("Preparando archivo", 8, R.color.zen_muted);
         details.setSingleLine(true);
         details.setEllipsize(TextUtils.TruncateAt.END);
         details.setPadding(0, dp(2), 0, 0);
 
         center.addView(title);
         center.addView(details);
-        body.addView(center, new LinearLayout.LayoutParams(0, dp(44), 1f));
+        body.addView(center, new LinearLayout.LayoutParams(0, dp(38), 1f));
 
         TextView percentView = text("", 10, R.color.zen_accent);
         percentView.setTypeface(Typeface.DEFAULT_BOLD);
         percentView.setGravity(Gravity.CENTER);
-        body.addView(percentView, new LinearLayout.LayoutParams(dp(44), dp(40)));
+        body.addView(percentView, new LinearLayout.LayoutParams(dp(39), dp(34)));
 
         notice.addView(body, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -3682,16 +3976,16 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         edge.setProgressBackgroundTintList(ColorStateList.valueOf(Color.TRANSPARENT));
         FrameLayout.LayoutParams edgeParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(3), Gravity.BOTTOM);
-        edgeParams.leftMargin = dp(1);
-        edgeParams.rightMargin = dp(1);
-        edgeParams.bottomMargin = dp(1);
+        edgeParams.leftMargin = dp(3);
+        edgeParams.rightMargin = dp(3);
+        edgeParams.bottomMargin = dp(2);
         notice.addView(edge, edgeParams);
 
         int displayWidth = getResources().getDisplayMetrics().widthPixels;
-        int targetWidth = Math.min(dp(318), displayWidth - dp(32));
+        int targetWidth = Math.min(dp(292), displayWidth - dp(32));
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
                 targetWidth,
-                dp(66),
+                dp(58),
                 Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         params.bottomMargin = safeInsetBottom + dp(14);
         appRoot.addView(notice, params);
@@ -3750,6 +4044,15 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     edge.setIndeterminate(false);
                     edge.setProgress(100, true);
                     if (!finishing[0]) {
+                        notice.animate().cancel();
+                        notice.animate().scaleX(1.018f).scaleY(1.018f)
+                                .setDuration(110L)
+                                .withEndAction(() -> notice.animate()
+                                        .scaleX(1f).scaleY(1f)
+                                        .setDuration(150L).start())
+                                .start();
+                        edge.animate().alpha(0f).setStartDelay(360L)
+                                .setDuration(260L).start();
                         finishing[0] = true;
                         mainHandler.postDelayed(
                                 () -> fadeDownloadNotice(notice, 140L),
@@ -3894,6 +4197,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             if (tab.loading && contextMenuDialog != null) dismissContextMenuImmediate();
             boolean sessionChanged = displayedSession != tab.session;
             attachSession(tab.session);
+            if (sessionChanged && !tab.showStartPage && activityResumed) {
+                scheduleSurfaceProbe(tab.session, 180L, tab.hasValidPaint,
+                        "render-session-change");
+            }
             String paintCoverKey = tab.id + ":" + tab.navigationSerial;
             boolean newTab = tab.showStartPage;
             newTabSurface.setVisibility(newTab ? View.VISIBLE : View.GONE);

@@ -205,10 +205,13 @@ public final class ZenPanelController {
         SharedPreferences preferences = ui(activity);
         long now = System.currentTimeMillis();
         long last = preferences.getLong(KEY_LAST_CACHE_CLEAR, 0L);
-        if (now - last < 6L * 60L * 60L * 1000L) return;
-        long cacheSize = directorySize(activity.getCacheDir());
-        if (cacheSize < 160L * 1024L * 1024L) return;
-        clearTemporaryCaches(activity, false);
+        if (now - last < 2L * 60L * 60L * 1000L) return;
+
+        // Automatic maintenance only touches Zen's bounded custom caches.
+        // Gecko's web cache remains intact unless the user explicitly clears it.
+        RemoteAssetLoader.trimNow(activity);
+        ContextMediaStore.trimNow(activity);
+        preferences.edit().putLong(KEY_LAST_CACHE_CLEAR, now).apply();
     }
 
     public static String activeProfile(Context context) {
@@ -526,7 +529,7 @@ public final class ZenPanelController {
                         KEY_ECO_RENDER, false, preferences));
                 content.addView(toggle(activity,
                         "Mantenimiento automático de caché",
-                        "Limpia solo temporales cuando superan 160 MB.",
+                        "Limita iconos y archivos contextuales sin vaciar la caché web.",
                         KEY_AUTO_CACHE, true, preferences));
                 TextView clearCache = actionRow(
                         activity, "Limpiar caché temporal ahora", R.color.zen_accent);
@@ -537,6 +540,7 @@ public final class ZenPanelController {
                         activity, "Limpiar iconos y vistas previas", R.color.zen_text);
                 clearIcons.setOnClickListener(v -> {
                     RemoteAssetLoader.clear(activity);
+                    ContextMediaStore.clear(activity);
                     Toast.makeText(
                             activity,
                             "Caché visual limpiada",
@@ -829,6 +833,7 @@ public final class ZenPanelController {
         TextView metrics;
         TextView action;
         ProgressBar progress;
+        String lastStatus;
     }
 
     public static void showDownloads(
@@ -957,8 +962,8 @@ public final class ZenPanelController {
         LinearLayout body = new LinearLayout(activity);
         body.setGravity(Gravity.CENTER_VERTICAL);
         body.setPadding(
-                dp(activity, 10), dp(activity, 8),
-                dp(activity, 7), dp(activity, 11));
+                dp(activity, 8), dp(activity, 5),
+                dp(activity, 6), dp(activity, 8));
 
         FrameLayout iconShell = new FrameLayout(activity);
         iconShell.setBackgroundResource(R.drawable.bg_download_icon_glow);
@@ -968,42 +973,42 @@ public final class ZenPanelController {
                 activity.getColor(R.color.zen_accent)));
         icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         iconShell.addView(icon, new FrameLayout.LayoutParams(
-                dp(activity, 30), dp(activity, 30), Gravity.CENTER));
+                dp(activity, 22), dp(activity, 22), Gravity.CENTER));
         body.addView(iconShell, new LinearLayout.LayoutParams(
-                dp(activity, 52), dp(activity, 52)));
+                dp(activity, 40), dp(activity, 40)));
 
         LinearLayout labels = new LinearLayout(activity);
         labels.setOrientation(LinearLayout.VERTICAL);
         labels.setGravity(Gravity.CENTER_VERTICAL);
-        labels.setPadding(dp(activity, 10), 0, dp(activity, 7), 0);
+        labels.setPadding(dp(activity, 8), 0, dp(activity, 5), 0);
 
-        binding.state = text(activity, "Descargando", 14, R.color.zen_text);
+        binding.state = text(activity, "Descargando", 12, R.color.zen_text);
         binding.state.setTypeface(Typeface.DEFAULT_BOLD);
         binding.state.setSingleLine(true);
 
-        binding.name = text(activity, "Archivo", 11, R.color.zen_muted);
+        binding.name = text(activity, "Archivo", 10, R.color.zen_muted);
         binding.name.setSingleLine(true);
         binding.name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
 
         binding.metrics = text(
-                activity, "Calculando velocidad", 10, R.color.zen_muted);
+                activity, "Calculando velocidad", 9, R.color.zen_muted);
         binding.metrics.setSingleLine(true);
         binding.metrics.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        binding.metrics.setPadding(0, dp(activity, 4), 0, 0);
+        binding.metrics.setPadding(0, dp(activity, 2), 0, 0);
 
         labels.addView(binding.state);
         labels.addView(binding.name);
         labels.addView(binding.metrics);
         body.addView(labels, new LinearLayout.LayoutParams(
-                0, dp(activity, 67), 1f));
+                0, dp(activity, 52), 1f));
 
-        binding.action = text(activity, "VER", 11, R.color.zen_accent);
+        binding.action = text(activity, "VER", 10, R.color.zen_accent);
         binding.action.setTypeface(Typeface.DEFAULT_BOLD);
         binding.action.setGravity(Gravity.CENTER);
-        binding.action.setPadding(dp(activity, 9), 0, dp(activity, 9), 0);
+        binding.action.setPadding(dp(activity, 7), 0, dp(activity, 7), 0);
         binding.action.setBackgroundResource(R.drawable.bg_download_action);
         body.addView(binding.action, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 40)));
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(activity, 32)));
 
         card.addView(body, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1019,17 +1024,17 @@ public final class ZenPanelController {
 
         FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(activity, 4),
+                dp(activity, 3),
                 Gravity.BOTTOM);
-        progressParams.leftMargin = dp(activity, 1);
-        progressParams.rightMargin = dp(activity, 1);
-        progressParams.bottomMargin = dp(activity, 1);
+        progressParams.leftMargin = dp(activity, 3);
+        progressParams.rightMargin = dp(activity, 3);
+        progressParams.bottomMargin = dp(activity, 2);
         card.addView(binding.progress, progressParams);
 
         LinearLayout.LayoutParams outer = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(activity, 90));
-        outer.setMargins(0, 0, 0, dp(activity, 8));
+                dp(activity, 72));
+        outer.setMargins(0, 0, 0, dp(activity, 6));
         card.setLayoutParams(outer);
 
         card.setOnLongClickListener(v -> {
@@ -1055,25 +1060,50 @@ public final class ZenPanelController {
         binding.name.setText(record.name == null || record.name.trim().isEmpty()
                 ? "Archivo" : record.name);
 
+        boolean statusChanged = binding.lastStatus == null
+                || !binding.lastStatus.equals(record.status);
         boolean active = DownloadStore.DOWNLOADING.equals(record.status)
                 || DownloadStore.QUEUED.equals(record.status);
         int percent = record.total > 0L
                 ? (int) Math.min(100L, record.bytes * 100L / record.total)
                 : 0;
 
-        binding.progress.setVisibility(View.VISIBLE);
-        binding.progress.setIndeterminate(active && record.total <= 0L);
-        if (!binding.progress.isIndeterminate()) {
-            binding.progress.setProgress(
-                    DownloadStore.COMPLETE.equals(record.status) ? 100 : percent,
-                    true);
+        if (!DownloadStore.COMPLETE.equals(record.status)) {
+            binding.progress.animate().cancel();
+            binding.progress.setAlpha(1f);
         }
+        binding.progress.setIndeterminate(active && record.total <= 0L);
 
         if (DownloadStore.COMPLETE.equals(record.status)) {
             binding.state.setText("Descarga completada");
             binding.metrics.setText(readableSize(record.bytes) + "   ·   100%");
             binding.action.setText("VER");
             binding.action.setOnClickListener(v -> openDownload(activity, record));
+            binding.progress.setIndeterminate(false);
+            binding.progress.setProgress(100, true);
+
+            if (statusChanged) {
+                binding.progress.setVisibility(View.VISIBLE);
+                binding.root.animate().cancel();
+                binding.root.setScaleX(1f);
+                binding.root.setScaleY(1f);
+                binding.root.animate()
+                        .scaleX(1.012f)
+                        .scaleY(1.012f)
+                        .setDuration(115L)
+                        .withEndAction(() -> binding.root.animate()
+                                .scaleX(1f)
+                                .scaleY(1f)
+                                .setDuration(145L)
+                                .start())
+                        .start();
+                binding.progress.animate()
+                        .alpha(0f)
+                        .setStartDelay(360L)
+                        .setDuration(280L)
+                        .withEndAction(() -> binding.progress.setVisibility(View.INVISIBLE))
+                        .start();
+            }
         } else if (DownloadStore.FAILED.equals(record.status)) {
             binding.state.setText("Error en la descarga");
             binding.metrics.setText(record.error == null || record.error.trim().isEmpty()
@@ -1093,11 +1123,16 @@ public final class ZenPanelController {
             binding.state.setText(DownloadStore.QUEUED.equals(record.status)
                     ? "Descarga en espera" : "Descargando");
             binding.metrics.setText(downloadMetrics(record));
+            binding.progress.setVisibility(View.VISIBLE);
+            if (!binding.progress.isIndeterminate()) {
+                binding.progress.setProgress(percent, true);
+            }
             binding.action.setText("CANCELAR");
             binding.action.setOnClickListener(v ->
                     DownloadStore.cancel(activity, record.id));
         }
 
+        binding.lastStatus = record.status;
         binding.root.setContentDescription(
                 binding.state.getText() + ". " + binding.name.getText()
                         + ". " + binding.metrics.getText());
@@ -1693,6 +1728,8 @@ public final class ZenPanelController {
             ZenGeckoApplication.runtime(activity)
                     .getStorageController()
                     .clearData(StorageController.ClearFlags.ALL_CACHES);
+            RemoteAssetLoader.clear(activity);
+            ContextMediaStore.clear(activity);
             deleteChildren(activity.getCacheDir());
             ui(activity).edit()
                     .putLong(KEY_LAST_CACHE_CLEAR, System.currentTimeMillis())

@@ -28,8 +28,9 @@ public final class RemoteAssetLoader {
         default void onError(Throwable error) { }
     }
 
-    private static final int MEMORY_ITEMS = 24;
-    private static final long DISK_LIMIT_BYTES = 10L * 1024L * 1024L;
+    private static final int MEMORY_ITEMS = 16;
+    private static final long DISK_LIMIT_BYTES = 6L * 1024L * 1024L;
+    private static final long DISK_MAX_AGE_MS = 14L * 24L * 60L * 60L * 1000L;
     private static final long MAX_RESPONSE_BYTES = 8L * 1024L * 1024L;
     private static final ExecutorService IO = Executors.newFixedThreadPool(2);
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
@@ -96,6 +97,12 @@ public final class RemoteAssetLoader {
         }
         File directory = new File(context.getCacheDir(), "zen-assets");
         IO.execute(() -> deleteRecursively(directory));
+    }
+
+    public static void trimNow(Context context) {
+        if (context == null) return;
+        Context app = context.getApplicationContext();
+        IO.execute(() -> trimDiskCache(new File(app.getCacheDir(), "zen-assets")));
     }
 
     private static void fetch(
@@ -241,12 +248,26 @@ public final class RemoteAssetLoader {
 
     private static void trimDiskCache(File directory) {
         if (directory == null || !directory.isDirectory()) return;
-        File[] files = directory.listFiles(file -> file.isFile() && file.getName().endsWith(".img"));
+        File[] all = directory.listFiles();
+        if (all == null) return;
+        long now = System.currentTimeMillis();
+        for (File file : all) {
+            if (!file.isFile()) continue;
+            boolean stalePart = file.getName().endsWith(".part")
+                    && now - file.lastModified() > 15L * 60L * 1000L;
+            boolean staleImage = file.getName().endsWith(".img")
+                    && now - file.lastModified() > DISK_MAX_AGE_MS;
+            if (stalePart || staleImage) {
+                try { file.delete(); } catch (SecurityException ignored) { }
+            }
+        }
+
+        File[] files = directory.listFiles(file ->
+                file.isFile() && file.getName().endsWith(".img"));
         if (files == null) return;
         long total = 0L;
         for (File file : files) total += file.length();
         if (total <= DISK_LIMIT_BYTES) return;
-
         java.util.Arrays.sort(files, (left, right) ->
                 Long.compare(left.lastModified(), right.lastModified()));
         for (File file : files) {

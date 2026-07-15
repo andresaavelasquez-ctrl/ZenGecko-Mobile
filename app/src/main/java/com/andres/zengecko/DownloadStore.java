@@ -10,7 +10,9 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.util.Base64;
 import android.webkit.MimeTypeMap;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -23,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.nio.charset.StandardCharsets;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.mozilla.geckoview.GeckoWebExecutor;
@@ -91,10 +94,12 @@ public final class DownloadStore {
     private static final Object LOCK = new Object();
     private static final ExecutorService EXECUTOR = Executors.newFixedThreadPool(2);
     private static final Map<String, AtomicBoolean> CANCEL_FLAGS = new ConcurrentHashMap<>();
+    private static final long MAX_DATA_URI_BYTES = 24L * 1024L * 1024L;
 
     private DownloadStore() { }
 
     public static Record enqueue(Context context, WebResponse response) {
+        if (response == null) return null;
         Context app = context.getApplicationContext();
         Record record = new Record();
         record.id = UUID.randomUUID().toString();
@@ -110,13 +115,23 @@ public final class DownloadStore {
         record.createdAt = System.currentTimeMillis();
         record.updatedAt = record.createdAt;
         record.bytesPerSecond = 0L;
+
+        String validation = response.body == null ? validationMessage(record.source) : "";
+        if (!validation.isEmpty()) {
+            record.status = FAILED;
+            record.error = validation;
+            upsert(app, record);
+            return record;
+        }
         upsert(app, record);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && response.body != null) {
+        if (response.body != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             AtomicBoolean cancelled = new AtomicBoolean(false);
             CANCEL_FLAGS.put(record.id, cancelled);
             InputStream body = response.body;
             EXECUTOR.execute(() -> streamToMediaStore(app, record, body, cancelled));
+        } else if (isDataUri(record.source)) {
+            startDataFetch(app, record);
         } else {
             if (response.body != null) {
                 try { response.body.close(); } catch (Exception ignored) { }
@@ -140,9 +155,13 @@ public final class DownloadStore {
         record.source = url.trim();
         record.referer = referer == null ? "" : referer.trim();
         record.mime = mimeHint == null || mimeHint.trim().isEmpty()
-                ? guessMime(record.source) : mimeHint.trim();
+                ? dataMime(record.source) : mimeHint.trim();
+        if (record.mime.isEmpty()) record.mime = guessMime(record.source);
         String requestedName = nameHint == null || nameHint.trim().isEmpty()
-                ? nameFromUrl(record.source) : nameHint.trim();
+                ? (isDataUri(record.source)
+                        ? "descarga-" + System.currentTimeMillis()
+                        : nameFromUrl(record.source))
+                : nameHint.trim();
         record.name = uniqueDisplayName(app, ensureExtension(requestedName, record.mime));
         record.total = -1L;
         record.status = QUEUED;
@@ -151,9 +170,98 @@ public final class DownloadStore {
         record.createdAt = System.currentTimeMillis();
         record.updatedAt = record.createdAt;
         record.bytesPerSecond = 0L;
+
+        String validation = validationMessage(record.source);
+        if (!validation.isEmpty()) {
+            record.status = FAILED;
+            record.error = validation;
+            upsert(app, record);
+            return record;
+        }
+
         upsert(app, record);
-        startUrlFetch(app, record);
+        if (isDataUri(record.source)) startDataFetch(app, record);
+        else startUrlFetch(app, record);
         return record;
+    }
+
+    public static String validationMessage(String rawUrl) {
+        if (rawUrl == null || rawUrl.trim().isEmpty()) return "Dirección de descarga vacía";
+        String clean = rawUrl.trim();
+        String lower = clean.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("data:")) {
+            int comma = clean.indexOf(',');
+            if (comma < 0) return "La URI data: está incompleta";
+            long estimated = Math.max(0L, clean.length() - comma - 1L);
+            if (estimated > MAX_DATA_URI_BYTES * 2L) {
+                return "El recurso data: es demasiado grande";
+            }
+            return "";
+        }
+        String scheme;
+        try {
+            scheme = Uri.parse(clean).getScheme();
+        } catch (RuntimeException error) {
+            return "Dirección de descarga inválida";
+        }
+        if (scheme == null) return "La dirección no tiene un esquema válido";
+        if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) return "";
+        if ("blob".equalsIgnoreCase(scheme)) {
+            return "Los enlaces blob: deben descargarse desde la propia página";
+        }
+        return "Esquema de descarga no compatible: " + scheme;
+    }
+
+    private static boolean isDataUri(String value) {
+        return value != null && value.trim().toLowerCase(Locale.ROOT).startsWith("data:");
+    }
+
+    private static String dataMime(String source) {
+        if (!isDataUri(source)) return "";
+        int comma = source.indexOf(',');
+        if (comma < 5) return "application/octet-stream";
+        String metadata = source.substring(5, comma);
+        int semicolon = metadata.indexOf(';');
+        String mime = semicolon >= 0 ? metadata.substring(0, semicolon) : metadata;
+        return mime.trim().isEmpty() ? "application/octet-stream" : mime.trim();
+    }
+
+    private static void startDataFetch(Context app, Record record) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            record.status = FAILED;
+            record.error = "Las descargas data: requieren Android 10 o superior";
+            record.updatedAt = System.currentTimeMillis();
+            upsert(app, record);
+            return;
+        }
+        EXECUTOR.execute(() -> {
+            try {
+                int comma = record.source.indexOf(',');
+                if (comma < 0) throw new IllegalArgumentException("URI data: incompleta");
+                String metadata = record.source.substring(5, comma);
+                String payload = record.source.substring(comma + 1);
+                boolean encoded = metadata.toLowerCase(Locale.ROOT).contains(";base64");
+                byte[] bytes = encoded
+                        ? Base64.decode(payload, Base64.DEFAULT)
+                        : Uri.decode(payload).getBytes(StandardCharsets.UTF_8);
+                if (bytes.length > MAX_DATA_URI_BYTES) {
+                    throw new IllegalStateException("El recurso data: supera 24 MB");
+                }
+                String mime = dataMime(record.source);
+                if (!mime.isEmpty()) record.mime = mime;
+                record.total = bytes.length;
+                AtomicBoolean cancelled = new AtomicBoolean(false);
+                CANCEL_FLAGS.put(record.id, cancelled);
+                streamToMediaStore(
+                        app, record, new ByteArrayInputStream(bytes), cancelled);
+            } catch (Throwable error) {
+                record.status = FAILED;
+                record.error = friendlyError(error);
+                record.bytesPerSecond = 0L;
+                record.updatedAt = System.currentTimeMillis();
+                upsert(app, record);
+            }
+        });
     }
 
     private static void startUrlFetch(Context app, Record record) {
@@ -193,16 +301,13 @@ public final class DownloadStore {
                                 streamToMediaStore(app, record, response.body, cancelled));
                     }, error -> {
                         record.status = FAILED;
-                        record.error = error == null || error.getMessage() == null
-                                ? "No se pudo iniciar"
-                                : error.getMessage();
+                        record.error = friendlyError(error);
                         record.updatedAt = System.currentTimeMillis();
                         upsert(app, record);
                     });
         } catch (Throwable error) {
             record.status = FAILED;
-            record.error = error.getMessage() == null
-                    ? "No se pudo iniciar" : error.getMessage();
+            record.error = friendlyError(error);
             record.updatedAt = System.currentTimeMillis();
             upsert(app, record);
         }
@@ -248,7 +353,8 @@ public final class DownloadStore {
         old.updatedAt = System.currentTimeMillis();
         old.systemId = -1L;
         upsert(app, old);
-        startUrlFetch(app, old);
+        if (isDataUri(old.source)) startDataFetch(app, old);
+        else startUrlFetch(app, old);
     }
 
     public static void remove(Context context, String id) {
@@ -322,7 +428,7 @@ public final class DownloadStore {
         } catch (Exception error) {
             if (target != null) app.getContentResolver().delete(target, null, null);
             record.status = FAILED;
-            record.error = error.getMessage() == null ? "Error de descarga" : error.getMessage();
+            record.error = friendlyError(error);
             record.bytesPerSecond = 0L;
             record.updatedAt = System.currentTimeMillis();
             upsert(app, record);
@@ -354,7 +460,7 @@ public final class DownloadStore {
             upsert(app, record);
         } catch (Exception error) {
             record.status = FAILED;
-            record.error = error.getMessage() == null ? "No se pudo iniciar" : error.getMessage();
+            record.error = friendlyError(error);
             upsert(app, record);
         }
     }
@@ -403,6 +509,25 @@ public final class DownloadStore {
         if (changed) synchronized (LOCK) { write(app, records); }
     }
 
+
+    private static String friendlyError(Throwable error) {
+        if (error == null) return "No se pudo iniciar la descarga";
+        String message = error.getMessage();
+        if (message == null || message.trim().isEmpty()) {
+            return "No se pudo completar la descarga";
+        }
+        String lower = message.toLowerCase(Locale.ROOT);
+        if (lower.contains("timeout") || lower.contains("timed out")) {
+            return "El servidor agotó el tiempo de espera";
+        }
+        if (lower.contains("unsupported uri") || lower.contains("unsupported scheme")) {
+            return "El tipo de enlace no es compatible con descargas directas";
+        }
+        if (lower.contains("network") || lower.contains("connection")) {
+            return "Se perdió la conexión durante la descarga";
+        }
+        return message;
+    }
 
     private static long smoothRate(long previous, long instant) {
         if (instant <= 0L) return previous;
