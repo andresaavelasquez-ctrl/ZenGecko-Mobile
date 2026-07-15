@@ -246,3 +246,20 @@ Artefacto esperado: `ZenBrowser-v0.1.15-debug`.
 - Conserva las protecciones del menú contextual introducidas en v0.1.16.
 - Artefacto esperado: `ZenBrowser-v0.1.17-debug`.
 
+## v0.1.18 — Web Compatibility & Android Integration
+
+- Añade selección nativa, copiar, cortar, pegar y seleccionar todo en la dirección.
+- Corrige el icono de Apariencia con una paleta vectorial y tintado explícito.
+- Reconstruye el icono adaptativo con fondo, primer plano y capa monocromática separados.
+- Elimina bordes negros del icono mostrado dentro del panel lateral.
+- Aplica Noche/Día a sugerencias, recientes, diálogos y superficies temporales.
+- Comunica a Gecko el esquema de color preferido para páginas compatibles.
+- Usa un lienzo web acorde al tema y retrasa la cubierta hasta una pintura estable.
+- Registra target=_blank y window.open() como nuevas pestañas Gecko.
+- El editor de accesos conserva únicamente Nombre y Dirección.
+- El favicon se resuelve automáticamente en segundo plano.
+- Completa ACTION_VIEW, WEB_SEARCH, APP_BROWSER y el rol de navegador.
+- Añade publicación automática mediante install.sh --release.
+- Artefacto de Actions: `ZenBrowser-v0.1.18-debug`.
+- APK de Release: `ZenBrowser-v0.1.18-debug.apk`.
+

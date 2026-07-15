@@ -24,6 +24,8 @@ import com.andres.zengecko.model.Workspace;
 public final class BrowserRepository {
     private static final String TAG = "ZenGecko/Browser";
     private static final long BLANK_TAB_GUARD_MS = 650L;
+    private long lastPopupRequestAt;
+    private String lastPopupRequestUri = "";
     public static final String INTERNAL_SETTINGS_URL = "zen://settings";
 
     public interface Observer {

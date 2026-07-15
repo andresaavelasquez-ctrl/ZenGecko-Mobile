@@ -3,6 +3,7 @@ package com.andres.zengecko;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
+import android.app.SearchManager;
 import android.animation.ObjectAnimator;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -164,6 +165,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private TextView sidebarWorkspaceLabel;
     private final ImageButton[] sidebarWorkspaceButtons = new ImageButton[3];
     private boolean sidebarWorkspaceTransition;
+    private String lastExternalIntentKey = "";
+    private long lastExternalIntentAt;
 
 
     private static final class ContextTarget {
@@ -259,7 +262,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             browser.loadInActiveTab(intent.getDataString());
         }
         render();
-    }
+    
+        ZenTheme.applyToRuntime(this);
+        mainHandler.post(() -> handleBrowserIntent(getIntent(), false));
+}
 
     @Override protected void onStart() {
         super.onStart();
@@ -278,6 +284,55 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         render();
         ZenPanelController.maybeTrimCache(this);
         mainHandler.postDelayed(() -> applySystemBars(true), 60L);
+    
+        ZenTheme.applyToRuntime(this);
+}
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleBrowserIntent(intent, true);
+    }
+
+    private void handleBrowserIntent(Intent intent, boolean fromNewIntent) {
+        if (intent == null || browser == null) return;
+        String action = intent.getAction();
+        String target = null;
+        if (Intent.ACTION_VIEW.equals(action) && intent.getData() != null) {
+            target = intent.getData().toString();
+        } else if (Intent.ACTION_WEB_SEARCH.equals(action)) {
+            target = intent.getStringExtra(SearchManager.QUERY);
+        }
+        if (target == null || target.trim().isEmpty()) return;
+
+        String clean = target.trim();
+        long now = android.os.SystemClock.elapsedRealtime();
+        String key = String.valueOf(action) + "|" + clean;
+        if (key.equals(lastExternalIntentKey)
+                && now - lastExternalIntentAt < 900L) {
+            Log.d(TAG, "Duplicated browser intent ignored: " + clean);
+            return;
+        }
+        lastExternalIntentKey = key;
+        lastExternalIntentAt = now;
+
+        try {
+            dismissSearchPopupImmediate();
+            dismissSidebarPopupImmediate();
+            dismissContextMenuImmediate();
+            if (fromNewIntent) {
+                browser.addTab(clean, true);
+            } else {
+                browser.loadInActiveTab(clean);
+            }
+            render();
+        } catch (Throwable error) {
+            Log.e(TAG, "Unable to handle external browser intent", error);
+            Toast.makeText(
+                    this,
+                    "No se pudo abrir el enlace",
+                    Toast.LENGTH_SHORT).show();
+        }
     }
 
     @Override protected void onPause() {
@@ -632,6 +687,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         geckoView = new GeckoView(this);
+        geckoView.setBackgroundColor(ZenTheme.webCanvasColor(this));
         geckoView.setBackgroundColor(getColor(R.color.zen_bg));
         webHost.addView(geckoView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -1626,7 +1682,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         brand.setBackgroundResource(R.drawable.bg_brand_header);
 
         ImageView brandIcon = new ImageView(this);
-        brandIcon.setImageResource(R.mipmap.ic_launcher);
+        brandIcon.setImageResource(R.drawable.ic_zen_brand_mark);
         brandIcon.setScaleType(ImageView.ScaleType.CENTER_CROP);
         brand.addView(brandIcon, new LinearLayout.LayoutParams(dp(38), dp(38)));
 
@@ -2030,8 +2086,9 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 R.color.zen_text);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         sheet.addView(title);
+
         TextView subtitle = text(
-                "Personaliza el nombre, la dirección y su icono.",
+                "Escribe el nombre y la dirección. Zen detectará el icono en segundo plano.",
                 10,
                 R.color.zen_muted);
         LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(
@@ -2042,13 +2099,15 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         LinearLayout previewRow = new LinearLayout(this);
         previewRow.setGravity(Gravity.CENTER_VERTICAL);
-        previewRow.setPadding(dp(2), dp(2), dp(2), dp(5));
+        previewRow.setPadding(dp(2), dp(2), dp(2), dp(7));
         ImageView preview = new ImageView(this);
         preview.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         preview.setBackgroundResource(R.drawable.bg_favicon);
         preview.setImageResource(R.drawable.ic_open_new);
-        preview.setImageTintList(ColorStateList.valueOf(getColor(R.color.zen_muted)));
+        preview.setImageTintList(ColorStateList.valueOf(
+                getColor(R.color.zen_accent)));
         previewRow.addView(preview, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
         TextView previewText = text(
                 existing == null ? "Nuevo acceso" : existing.name,
                 14,
@@ -2060,31 +2119,23 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         previewRow.addView(previewText, previewTextParams);
         sheet.addView(previewRow);
 
-        EditText name = quickAccessInput("Nombre", existing == null ? "" : existing.name);
-        EditText url = quickAccessInput("https://sitio.com", existing == null ? "" : existing.url);
-        EditText iconUrl = quickAccessInput(
-                "Icono automático o URL de imagen",
-                existing == null ? "" : existing.iconUrl);
+        EditText name = quickAccessInput(
+                "Nombre", existing == null ? "" : existing.name);
+        EditText url = quickAccessInput(
+                "https://sitio.com", existing == null ? "" : existing.url);
         sheet.addView(quickEditorField("NOMBRE", name));
         sheet.addView(quickEditorField("DIRECCIÓN", url));
-        sheet.addView(quickEditorField("ICONO", iconUrl));
 
-        TextView detect = quickEditorAction(
-                "Detectar icono automáticamente", false);
-        detect.setOnClickListener(v -> {
-            String cleanUrl = url.getText().toString().trim();
-            if (cleanUrl.isEmpty()) {
-                url.setError("Escribe primero una dirección");
-                return;
+        name.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(
+                    CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(
+                    CharSequence s, int start, int before, int count) {
+                String value = s == null ? "" : s.toString().trim();
+                previewText.setText(value.isEmpty() ? "Nuevo acceso" : value);
             }
-            String detected = QuickAccessStore.automaticIconUrl(cleanUrl);
-            iconUrl.setText(detected);
-            loadQuickAccessPreview(preview, detected);
+            @Override public void afterTextChanged(android.text.Editable s) { }
         });
-        LinearLayout.LayoutParams detectParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(42));
-        detectParams.setMargins(0, dp(8), 0, dp(12));
-        sheet.addView(detect, detectParams);
 
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
@@ -2110,13 +2161,16 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         }
 
         TextView cancel = quickEditorAction("Cancelar", false);
-        LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(dp(94), dp(42));
+        LinearLayout.LayoutParams cancelParams =
+                new LinearLayout.LayoutParams(dp(94), dp(42));
         cancelParams.setMargins(dp(7), 0, dp(7), 0);
         actions.addView(cancel, cancelParams);
-
         TextView save = quickEditorAction("Guardar", true);
         actions.addView(save, new LinearLayout.LayoutParams(dp(96), dp(42)));
-        sheet.addView(actions);
+        LinearLayout.LayoutParams actionsParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
+        actionsParams.setMargins(0, dp(13), 0, 0);
+        sheet.addView(actions, actionsParams);
 
         cancel.setOnClickListener(v -> dialog.dismiss());
         save.setOnClickListener(v -> {
@@ -2135,24 +2189,25 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 draft.workspaceId = workspaceId;
                 draft.name = cleanName;
                 draft.url = QuickAccessStore.normalizeUrl(cleanUrl);
-                draft.iconUrl = iconUrl.getText().toString().trim();
-                if (draft.iconUrl.isEmpty()) {
-                    draft.iconUrl = QuickAccessStore.automaticIconUrl(draft.url);
-                }
+                draft.iconUrl = "";
                 if (!QuickAccessStore.save(getApplicationContext(), draft)) {
-                    Toast.makeText(this,
+                    Toast.makeText(
+                            this,
                             "El espacio ya tiene el máximo de accesos",
                             Toast.LENGTH_SHORT).show();
                     v.setEnabled(true);
                     return;
                 }
+                ZenFaviconResolver.resolveAndSave(
+                        getApplicationContext(), draft.copy());
                 dialog.dismiss();
                 mainHandler.postDelayed(() -> {
                     if (isActivityUsable()) showSidebarPopup();
                 }, 120L);
             } catch (Throwable error) {
                 Log.e(TAG, "Unable to save quick access", error);
-                Toast.makeText(this,
+                Toast.makeText(
+                        this,
                         "No se pudo guardar el acceso",
                         Toast.LENGTH_SHORT).show();
                 v.setEnabled(true);
@@ -2160,7 +2215,6 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         });
 
         dialog.setContentView(sheet);
-        dialog.setOnDismissListener(ignored -> RemoteAssetLoader.cancel(preview));
         try {
             dialog.show();
             Window window = dialog.getWindow();
@@ -2170,22 +2224,20 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             WindowManager.LayoutParams attributes = window.getAttributes();
             attributes.dimAmount = ZenTheme.isDay(this) ? .22f : .38f;
             window.setAttributes(attributes);
-            int width = Math.min(dp(420),
+            int width = Math.min(
+                    dp(420),
                     getResources().getDisplayMetrics().widthPixels - dp(30));
             window.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT);
-            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+            window.setSoftInputMode(
+                    WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
             sheet.setAlpha(0f);
             sheet.setTranslationY(dp(12));
             sheet.animate().alpha(1f).translationY(0f).setDuration(150L).start();
-            if (existing != null && existing.iconUrl != null
-                    && !existing.iconUrl.trim().isEmpty()) {
-                mainHandler.postDelayed(
-                        () -> loadQuickAccessPreview(preview, existing.iconUrl), 80L);
-            }
         } catch (RuntimeException error) {
             Log.e(TAG, "Unable to show quick access editor", error);
             try { dialog.dismiss(); } catch (RuntimeException ignored) { }
-            Toast.makeText(this,
+            Toast.makeText(
+                    this,
                     "No se pudo abrir el editor de accesos",
                     Toast.LENGTH_SHORT).show();
         }
@@ -2717,6 +2769,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         searchInput = new EditText(this);
         searchInput.setSingleLine(true);
+        searchInput.setTextIsSelectable(true);
+        searchInput.setLongClickable(true);
+        searchInput.setSelectAllOnFocus(false);
+        searchInput.setCursorVisible(true);
         searchInput.setTextColor(getColor(R.color.zen_text));
         searchInput.setHintTextColor(getColor(R.color.zen_muted));
         searchInput.setTextSize(16);
@@ -4405,7 +4461,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     lastPaintCoverKey = paintCoverKey;
                 } else if (tab.hasValidPaint && paintGuard != null
                         && paintGuard.getVisibility() == View.VISIBLE) {
-                    hidePaintGuard(tab.session, false);
+                    releasePaintGuardWhenStable(tab);
                 }
                 if (addressDisplay != null) {
                     boolean showAddress = !newTab
@@ -4448,6 +4504,22 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         } finally {
             rendering = false;
         }
+    }
+
+    private void releasePaintGuardWhenStable(BrowserTab source) {
+        if (source == null || source.session == null) return;
+        final String expectedTab = source.id;
+        final long expectedNavigation = source.navigationSerial;
+        final GeckoSession expectedSession = source.session;
+        mainHandler.postDelayed(() -> {
+            BrowserTab active = browser == null ? null : browser.getActiveTab();
+            if (!activityResumed || active == null
+                    || !expectedTab.equals(active.id)
+                    || active.navigationSerial != expectedNavigation
+                    || active.session != expectedSession
+                    || !active.hasValidPaint) return;
+            hidePaintGuard(expectedSession, false);
+        }, 110L);
     }
 
     private ImageButton toolbarButton(int drawableRes, String description) {

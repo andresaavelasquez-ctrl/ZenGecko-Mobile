@@ -5,14 +5,18 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.os.Build;
+import android.util.Log;
 import android.view.View;
 import android.view.WindowInsetsController;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 
 /** Stores and applies Zen Browser's explicit Day/Night theme. */
 public final class ZenTheme {
     public static final String MODE_NIGHT = "night";
     public static final String MODE_DAY = "day";
 
+    private static final String TAG = "ZenTheme";
     private static final String PREFS = "zen_ui_prefs";
     private static final String KEY_MODE = "theme_mode";
 
@@ -49,6 +53,7 @@ public final class ZenTheme {
         String current = preferences.getString(KEY_MODE, MODE_NIGHT);
         if (next.equals(current)) return;
         preferences.edit().putString(KEY_MODE, next).apply();
+        applyToRuntime(activity);
         activity.getWindow().getDecorView().postDelayed(activity::recreate, 70L);
     }
 
@@ -68,12 +73,55 @@ public final class ZenTheme {
         return isDay(context) ? 0x520A0710 : 0xB8000000;
     }
 
+    public static int webCanvasColor(Context context) {
+        return isDay(context) ? 0xFFFFFFFF : 0xFF050508;
+    }
+
+    /** Applies prefers-color-scheme to Gecko without hard-binding a minor API. */
+    public static void applyToRuntime(Context context) {
+        if (context == null) return;
+        try {
+            Object runtime = ZenGeckoApplication.runtime(context);
+            Method getSettings = runtime.getClass().getMethod("getSettings");
+            Object settings = getSettings.invoke(runtime);
+            Class<?> settingsClass = settings.getClass();
+
+            int scheme = isDay(context)
+                    ? readScheme(settingsClass, "COLOR_SCHEME_LIGHT", 1)
+                    : readScheme(settingsClass, "COLOR_SCHEME_DARK", 2);
+            Method setter = settingsClass.getMethod(
+                    "setPreferredColorScheme", int.class);
+            setter.invoke(settings, scheme);
+            Log.d(TAG, "Preferred web color scheme applied: " + scheme);
+        } catch (Throwable error) {
+            Log.w(TAG, "Unable to apply preferred web color scheme", error);
+        }
+    }
+
+    private static int readScheme(
+            Class<?> settingsClass, String fieldName, int fallback) {
+        try {
+            Field field = settingsClass.getField(fieldName);
+            return field.getInt(null);
+        } catch (Throwable ignored) {
+            try {
+                Class<?> canonical = Class.forName(
+                        "org.mozilla.geckoview.GeckoRuntimeSettings");
+                Field field = canonical.getField(fieldName);
+                return field.getInt(null);
+            } catch (Throwable ignoredAgain) {
+                return fallback;
+            }
+        }
+    }
+
     public static void applySystemBarAppearance(Activity activity) {
         if (activity == null) return;
         boolean light = isDay(activity);
         View decor = activity.getWindow().getDecorView();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            WindowInsetsController controller = activity.getWindow().getInsetsController();
+            WindowInsetsController controller =
+                    activity.getWindow().getInsetsController();
             if (controller != null) {
                 int mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
                         | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;

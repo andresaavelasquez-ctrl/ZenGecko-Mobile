@@ -181,6 +181,8 @@ public final class NativeSettingsPage {
 
         ImageView icon = new ImageView(activity);
         icon.setImageResource(iconRes);
+        icon.setImageTintList(ColorStateList.valueOf(
+                activity.getColor(R.color.zen_accent)));
         icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         row.addView(icon, new LinearLayout.LayoutParams(dp(30), dp(30)));
 
@@ -228,6 +230,10 @@ public final class NativeSettingsPage {
                 addToggle(page, "Confirmar antes de salir",
                         "Pregunta antes de cerrar completamente Zen Browser.",
                         ZenPanelController.KEY_CONFIRM_EXIT, true);
+                addAction(page, R.drawable.ic_open_new,
+                        "Navegador predeterminado",
+                        "Abre la selección de navegador de Android.",
+                        () -> BrowserRoleHelper.requestDefaultBrowser(activity));
                 break;
             case "appearance":
                 addTitle(page, "Apariencia", "Tema, colores e interfaz");
