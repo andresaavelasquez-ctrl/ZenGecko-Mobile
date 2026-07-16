@@ -17,6 +17,8 @@ public final class BrowserTab {
     public boolean hasValidPaint;
     public int progress;
     public int navigationSerial;
+    public boolean popupWindow;
+    public long createdAtElapsed;
     public GeckoSession session;
 
     public BrowserTab(String id, String workspaceId, String title, String url) {
@@ -28,5 +30,6 @@ public final class BrowserTab {
         this.desktopMode = false;
         this.hasValidPaint = this.showStartPage;
         this.progress = 0;
+        this.createdAtElapsed = android.os.SystemClock.elapsedRealtime();
     }
 }

@@ -1,15 +1,21 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item>
+    <item android:top="4dp">
         <shape android:shape="rectangle">
-            <solid android:color="#FFFFFF" />
-            <corners android:radius="14dp" />
-            <stroke android:width="1dp" android:color="#D8D2E2" />
+            <solid android:color="#D8D1E2" />
+            <corners android:radius="15dp" />
+        </shape>
+    </item>
+    <item android:bottom="4dp">
+        <shape android:shape="rectangle">
+            <gradient android:angle="315" android:startColor="#FFFFFF" android:endColor="#F5F1FA" />
+            <corners android:radius="15dp" />
+            <stroke android:width="1dp" android:color="#CEC5D8" />
         </shape>
     </item>
     <item
         android:drawable="@drawable/ic_launcher_foreground"
-        android:insetLeft="3dp"
-        android:insetTop="3dp"
-        android:insetRight="3dp"
-        android:insetBottom="3dp" />
+        android:insetLeft="4dp"
+        android:insetTop="2dp"
+        android:insetRight="4dp"
+        android:insetBottom="6dp" />
 </layer-list>

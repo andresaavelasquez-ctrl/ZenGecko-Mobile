@@ -26,6 +26,7 @@ public final class BrowserRepository {
     private static final long BLANK_TAB_GUARD_MS = 650L;
     private long lastPopupRequestAt;
     private String lastPopupRequestUri = "";
+    private String lastPopupTabId = "";
     public static final String INTERNAL_SETTINGS_URL = "zen://settings";
 
     public interface Observer {
@@ -390,6 +391,41 @@ public final class BrowserRepository {
         return searchEngine.buildSearchUrl(value);
     }
 
+    private BrowserTab createPopupTab(String requestedUri) {
+        String target = requestedUri == null || requestedUri.trim().isEmpty()
+                ? "about:blank" : requestedUri.trim();
+        long now = SystemClock.elapsedRealtime();
+        if (now - lastPopupRequestAt < 260L
+                && target.equals(lastPopupRequestUri)) {
+            BrowserTab duplicated = findTab(lastPopupTabId);
+            if (duplicated != null && duplicated.session != null
+                    && duplicated.session.isOpen()) {
+                Log.w(TAG, "Cancelled duplicated popup request for " + target);
+                return null;
+            }
+        }
+
+        lastPopupRequestAt = now;
+        lastPopupRequestUri = target;
+        BrowserTab popup = addTabInternal(target, true, false);
+        popup.popupWindow = true;
+        popup.showStartPage = false;
+        popup.hasValidPaint = false;
+        popup.loading = true;
+        lastPopupTabId = popup.id;
+
+        // Return the opened GeckoSession before notifying/attaching the UI.
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+            BrowserTab current = findTab(popup.id);
+            if (current == null) return;
+            activeWorkspaceId = current.workspaceId;
+            activeTabId = current.id;
+            updateSessionActivity();
+            persistAndNotify();
+        });
+        return popup;
+    }
+
     private BrowserTab addTabInternal(String url, boolean select, boolean load) {
         BrowserTab tab = new BrowserTab(UUID.randomUUID().toString(), activeWorkspaceId, "Nueva pestaña", url);
         tab.desktopMode = ZenPanelController.desktopModeDefault(context);
@@ -481,6 +517,14 @@ public final class BrowserRepository {
                     if (!"about:blank".equals(url)) tab.showStartPage = false;
                     recordRecentUrl(url);
                 }
+                if (tab.popupWindow
+                        && SystemClock.elapsedRealtime() - tab.createdAtElapsed < 7000L
+                        && !tab.id.equals(activeTabId)) {
+                    activeWorkspaceId = tab.workspaceId;
+                    activeTabId = tab.id;
+                    updateSessionActivity();
+                    Log.d(TAG, "Focused popup tab during redirect: " + tab.id);
+                }
                 persistAndNotify();
             }
             @Override public void onCanGoBack(GeckoSession ignored, boolean canGoBack) {
@@ -491,10 +535,21 @@ public final class BrowserRepository {
                 tab.canGoForward = canGoForward;
                 notifyObservers();
             }
-            @Override public GeckoResult<GeckoSession> onNewSession(GeckoSession ignored, String uri) {
-                BrowserTab newTab = addTabInternal(uri, true, false);
-                persistAndNotify();
-                return GeckoResult.fromValue(newTab.session);
+            @Override public GeckoResult<GeckoSession> onNewSession(
+                    GeckoSession source, String uri) {
+                try {
+                    BrowserTab popup = createPopupTab(uri);
+                    if (popup == null) {
+                        return GeckoResult.fromValue((GeckoSession) null);
+                    }
+                    Log.i(TAG, "Popup session created tab=" + popup.id
+                            + " source=" + Integer.toHexString(
+                                    System.identityHashCode(source)));
+                    return GeckoResult.fromValue(popup.session);
+                } catch (Throwable error) {
+                    Log.e(TAG, "Unable to create popup session", error);
+                    return GeckoResult.fromValue((GeckoSession) null);
+                }
             }
             @Override public GeckoResult<String> onLoadError(
                     GeckoSession ignored, String uri, WebRequestError error) {
@@ -515,6 +570,13 @@ public final class BrowserRepository {
                 tab.url = url;
                 tab.showStartPage = url == null || "about:blank".equals(url);
                 tab.hasValidPaint = tab.showStartPage;
+                if (tab.popupWindow
+                        && SystemClock.elapsedRealtime() - tab.createdAtElapsed < 7000L
+                        && !tab.id.equals(activeTabId)) {
+                    activeWorkspaceId = tab.workspaceId;
+                    activeTabId = tab.id;
+                    updateSessionActivity();
+                }
                 notifyPageStarted(source, url, hadValidPaint);
                 notifyObservers();
             }

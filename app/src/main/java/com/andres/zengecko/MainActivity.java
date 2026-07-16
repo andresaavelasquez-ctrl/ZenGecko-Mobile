@@ -257,10 +257,6 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         registerModernBackCallback();
         applySystemBars(true);
 
-        Intent intent = getIntent();
-        if (intent != null && Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null) {
-            browser.loadInActiveTab(intent.getDataString());
-        }
         render();
     
         ZenTheme.applyToRuntime(this);
@@ -448,10 +444,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     BrowserTab current = browser == null ? null : browser.getActiveTab();
                     if (current == null || current.session != session) return;
                     if (!current.hasValidPaint) {
-                        hidePaintGuard(session, true);
-                        clearTransitionSnapshot();
-                        tabTransitionRunning = false;
-                        setRenderPhase(session, RenderPhase.IDLE, "page-stop-failed");
+                        showPaintGuard(session, "");
+                        scheduleSurfaceProbe(session, 260L, false, "page-stop-failed");
+                        setRenderPhase(session, RenderPhase.WAITING_FOR_COMPOSITE,
+                                "page-stop-failed-kept-covered");
                     }
                 }, 1200L);
             }
@@ -659,7 +655,9 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         fixedSidebar = createCompactRail();
         root.addView(fixedSidebar, new LinearLayout.LayoutParams(
-                dp(58), ViewGroup.LayoutParams.MATCH_PARENT));
+                wideLayout ? landscapeSidebarWidth(
+                        getResources().getConfiguration()) : 0,
+                ViewGroup.LayoutParams.MATCH_PARENT));
 
         browserColumn = new LinearLayout(this);
         browserColumn.setOrientation(LinearLayout.VERTICAL);
@@ -688,7 +686,6 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         geckoView = new GeckoView(this);
         geckoView.setBackgroundColor(ZenTheme.webCanvasColor(this));
-        geckoView.setBackgroundColor(getColor(R.color.zen_bg));
         webHost.addView(geckoView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -856,7 +853,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             ViewGroup.LayoutParams raw = fixedSidebar.getLayoutParams();
             if (raw instanceof LinearLayout.LayoutParams) {
                 LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) raw;
-                params.width = showRail ? dp(58) : 0;
+                params.width = showRail
+                        ? landscapeSidebarWidth(configuration) : 0;
                 fixedSidebar.setLayoutParams(params);
             }
         }
@@ -1335,12 +1333,28 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         return bar;
     }
 
+    private int homeBackgroundResource() {
+        if (!ZenTheme.isDay(this)) return R.drawable.zen_home_bonsai;
+        boolean landscape = getResources().getConfiguration().orientation
+                == Configuration.ORIENTATION_LANDSCAPE;
+        return landscape
+                ? R.drawable.zen_home_day_landscape
+                : R.drawable.zen_home_day_portrait;
+    }
+
+    private void applyHomeBackgroundForTheme() {
+        if (homeBackgroundView == null) return;
+        homeBackgroundView.setImageResource(homeBackgroundResource());
+        homeBackgroundView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        homeBackgroundView.setBackgroundColor(getColor(R.color.zen_bg));
+    }
+
     private View createNewTabSurface() {
         FrameLayout surface = new FrameLayout(this);
         surface.setBackgroundColor(getColor(R.color.zen_bg));
 
         homeBackgroundView = new ImageView(this);
-        homeBackgroundView.setImageResource(R.drawable.zen_home_bonsai);
+        homeBackgroundView.setImageResource(homeBackgroundResource());
         homeBackgroundView.setScaleType(ImageView.ScaleType.CENTER_CROP);
         homeBackgroundView.setBackgroundColor(getColor(R.color.zen_bg));
         surface.addView(homeBackgroundView, new FrameLayout.LayoutParams(
@@ -1444,6 +1458,17 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         trigger.setClickable(true);
         trigger.setFocusable(true);
         trigger.setOnClickListener(v -> openSearchEditor(newTabMode));
+        trigger.setOnLongClickListener(v -> {
+            openSearchEditor(newTabMode);
+            mainHandler.postDelayed(() -> {
+                if (searchInput == null || searchPopup == null
+                        || !searchPopup.isShowing()) return;
+                searchInput.requestFocus();
+                searchInput.selectAll();
+                searchInput.performLongClick();
+            }, 170L);
+            return true;
+        });
     }
 
     private void openSearchEditor(boolean newTabMode) {
@@ -1525,16 +1550,19 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private View createCompactRail() {
+        return wideLayout ? createLandscapeSidebar() : createNarrowCompactRail();
+    }
+
+    private View createNarrowCompactRail() {
         LinearLayout rail = new LinearLayout(this);
         rail.setOrientation(LinearLayout.VERTICAL);
         rail.setGravity(Gravity.CENTER_HORIZONTAL);
         rail.setPadding(dp(5), dp(6), dp(5), dp(6));
         rail.setBackgroundResource(R.drawable.bg_compact_rail);
 
-        TextView zen = text("Z", 18, R.color.zen_key_text);
-        zen.setTypeface(Typeface.DEFAULT_BOLD);
-        zen.setGravity(Gravity.CENTER);
-        zen.setBackgroundResource(R.drawable.bg_zen_mark);
+        ImageView zen = new ImageView(this);
+        zen.setImageResource(R.drawable.ic_zen_brand_mark);
+        zen.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         zen.setContentDescription("Abrir pestañas");
         zen.setOnClickListener(v -> showSidebarPopup());
         rail.addView(zen, new LinearLayout.LayoutParams(dp(42), dp(42)));
@@ -1564,6 +1592,146 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         expandParams.setMargins(0, dp(4), 0, 0);
         rail.addView(expand, expandParams);
         return rail;
+    }
+
+    private View createLandscapeSidebar() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(10), dp(8), dp(10), dp(8));
+        panel.setBackgroundResource(R.drawable.bg_landscape_sidebar);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView brand = new ImageView(this);
+        brand.setImageResource(R.drawable.ic_zen_brand_mark);
+        brand.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        brand.setOnClickListener(v -> showSidebarPopup());
+        header.addView(brand, new LinearLayout.LayoutParams(dp(38), dp(38)));
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setPadding(dp(9), 0, dp(4), 0);
+        TextView title = text("ZEN BROWSER", 13, R.color.zen_text);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        TextView workspace = text(browser.getActiveWorkspaceName(), 9, R.color.zen_muted);
+        labels.addView(title);
+        labels.addView(workspace);
+        header.addView(labels, new LinearLayout.LayoutParams(0, dp(40), 1f));
+
+        ImageButton add = iconButton(R.drawable.ic_add, "Nueva pestaña");
+        add.setOnClickListener(this::openNewTabAndSearch);
+        header.addView(add, square(34));
+        ImageButton more = iconButton(R.drawable.ic_menu, "Panel completo");
+        more.setOnClickListener(v -> showSidebarPopup());
+        header.addView(more, square(34));
+        panel.addView(header, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44)));
+
+        panel.addView(label("PESTAÑAS ABIERTAS"));
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setVerticalScrollBarEnabled(false);
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.VERTICAL);
+        for (BrowserTab tab : browser.getVisibleTabs()) {
+            tabs.addView(landscapeTabRow(tab));
+        }
+        TextView newTab = text("＋  Nueva pestaña", 11, R.color.zen_muted);
+        newTab.setGravity(Gravity.CENTER_VERTICAL);
+        newTab.setPadding(dp(10), 0, dp(10), 0);
+        newTab.setOnClickListener(this::openNewTabAndSearch);
+        LinearLayout.LayoutParams newTabParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(38));
+        newTabParams.setMargins(0, dp(2), 0, 0);
+        tabs.addView(newTab, newTabParams);
+        scroll.addView(tabs);
+        panel.addView(scroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        LinearLayout footer = new LinearLayout(this);
+        footer.setGravity(Gravity.CENTER_VERTICAL);
+        ImageButton settings = iconButton(R.drawable.ic_settings, "Configuración");
+        settings.setOnClickListener(v -> {
+            browser.openSettingsTab();
+            render();
+        });
+        footer.addView(settings, square(38));
+
+        for (Workspace item : browser.getWorkspaces()) {
+            ImageButton space = iconButton(workspaceIconRes(item.id), "Espacio " + item.name);
+            boolean selected = item.id.equals(browser.getActiveWorkspaceId());
+            space.setAlpha(selected ? 1f : .48f);
+            space.setScaleX(selected ? 1f : .84f);
+            space.setScaleY(selected ? 1f : .84f);
+            space.setBackgroundResource(selected
+                    ? R.drawable.bg_workspace_active
+                    : R.drawable.bg_workspace_idle);
+            space.setOnClickListener(v -> {
+                if (!item.id.equals(browser.getActiveWorkspaceId())) {
+                    animateWebTransition(() -> browser.switchWorkspace(item.id));
+                }
+            });
+            footer.addView(space, new LinearLayout.LayoutParams(0, dp(38), 1f));
+        }
+
+        ImageButton downloads = iconButton(R.drawable.ic_downloads, "Descargas");
+        downloads.setOnClickListener(v -> ZenPanelController.showDownloads(this, browser, null));
+        footer.addView(downloads, square(38));
+        panel.addView(footer, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
+        return panel;
+    }
+
+    private View landscapeTabRow(BrowserTab tab) {
+        boolean active = tab.id.equals(browser.getActiveTabId());
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(7), dp(3), dp(5), dp(3));
+        row.setBackgroundResource(active
+                ? R.drawable.bg_tab_active : R.drawable.bg_landscape_tab);
+
+        TextView mark = text(faviconLetter(tab), 11, R.color.zen_text);
+        mark.setTypeface(Typeface.DEFAULT_BOLD);
+        mark.setGravity(Gravity.CENTER);
+        mark.setBackgroundResource(R.drawable.bg_favicon);
+        row.addView(mark, new LinearLayout.LayoutParams(dp(32), dp(32)));
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setPadding(dp(8), 0, dp(4), 0);
+        TextView title = text(displayTitle(tab), 11, R.color.zen_text);
+        title.setSingleLine(true);
+        title.setEllipsize(TextUtils.TruncateAt.END);
+        TextView url = text(shortUrl(tab.url), 8, R.color.zen_muted);
+        url.setSingleLine(true);
+        url.setEllipsize(TextUtils.TruncateAt.END);
+        labels.addView(title);
+        labels.addView(url);
+        row.addView(labels, new LinearLayout.LayoutParams(0, dp(36), 1f));
+
+        ImageButton close = iconButton(R.drawable.ic_close, "Cerrar pestaña");
+        close.setOnClickListener(v -> {
+            browser.closeTab(tab.id);
+            showUndoSnackbar();
+        });
+        row.addView(close, new LinearLayout.LayoutParams(dp(32), dp(32)));
+        row.setOnClickListener(v -> {
+            if (!tab.id.equals(browser.getActiveTabId())) {
+                animateWebTransition(() -> browser.selectTab(tab.id));
+            }
+        });
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44));
+        params.setMargins(0, 1, 0, 1);
+        row.setLayoutParams(params);
+        return row;
+    }
+
+    private int landscapeSidebarWidth(Configuration configuration) {
+        int screenDp = configuration == null
+                ? getResources().getConfiguration().screenWidthDp
+                : configuration.screenWidthDp;
+        return dp(Math.max(238, Math.min(292, screenDp / 3)));
     }
 
     private LinearLayout.LayoutParams compactRailItemParams() {
@@ -2767,18 +2935,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         LinearLayout searchBar = new LinearLayout(this);
         searchBar.setGravity(Gravity.CENTER_VERTICAL);
 
-        searchInput = new EditText(this);
+        searchInput = new ZenAddressEditText(this);
         searchInput.setSingleLine(true);
-        searchInput.setTextIsSelectable(true);
-        searchInput.setLongClickable(true);
-        searchInput.setSelectAllOnFocus(false);
-        searchInput.setCursorVisible(true);
         searchInput.setTextColor(getColor(R.color.zen_text));
         searchInput.setHintTextColor(getColor(R.color.zen_muted));
         searchInput.setTextSize(16);
         searchInput.setHint("Buscar o escribir una dirección");
-        searchInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        searchInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         searchInput.setBackgroundResource(R.drawable.bg_address);
         searchInput.setPadding(dp(16), 0, dp(16), 0);
         String initial = newTabMode ? "" : activeUrlForEditing();
@@ -3526,7 +3688,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         homeBackgroundView.animate().cancel();
         // Reload after a configuration change so Android resolves the landscape resource.
-        homeBackgroundView.setImageResource(R.drawable.zen_home_bonsai);
+        homeBackgroundView.setImageResource(homeBackgroundResource());
         homeBackgroundView.setScaleType(ImageView.ScaleType.CENTER_CROP);
 
         if (!showBackground) {
@@ -4491,7 +4653,9 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 root.removeView(fixedSidebar);
                 root.addView(replacement, index,
                         new LinearLayout.LayoutParams(
-                                dp(58), ViewGroup.LayoutParams.MATCH_PARENT));
+                                wideLayout ? landscapeSidebarWidth(
+                                        getResources().getConfiguration()) : 0,
+                                ViewGroup.LayoutParams.MATCH_PARENT));
                 fixedSidebar = replacement;
                 lastSidebarFingerprint = fingerprint;
                 applyResponsiveLayout(getResources().getConfiguration());
@@ -4518,8 +4682,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     || active.navigationSerial != expectedNavigation
                     || active.session != expectedSession
                     || !active.hasValidPaint) return;
-            hidePaintGuard(expectedSession, false);
-        }, 110L);
+            scheduleSurfaceProbe(expectedSession, 35L, true, "stable-cover-release");
+        }, 165L);
     }
 
     private ImageButton toolbarButton(int drawableRes, String description) {

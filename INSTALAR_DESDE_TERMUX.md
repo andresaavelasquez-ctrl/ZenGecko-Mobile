@@ -186,3 +186,23 @@ gh run watch
 - Artefacto de Actions: `ZenBrowser-v0.1.18-debug`.
 - APK de Release: `ZenBrowser-v0.1.18-debug.apk`.
 
+## v0.1.19 — Navigation, Landscape & Day Polish
+
+- Restaura la identidad de la Z con un primer plano adaptativo fiel al icono-tecla.
+- Unifica launcher, icono monocromático y marca interna sin esquinas negras.
+- Sustituye la dirección por un campo nativo que conserva doble toque, pulsación larga,
+  seleccionar, seleccionar todo, copiar, cortar, pegar y controles de selección.
+- Elimina el procesamiento doble de ACTION_VIEW que podía crear pestañas repetidas.
+- Entrega la GeckoSession hija antes de actualizar la interfaz y mantiene su foco durante
+  la cadena inicial de redirecciones.
+- Protege solicitudes emergentes duplicadas sin recargar la pestaña de origen.
+- Mantiene la captura o cubierta anterior cuando una navegación falla temporalmente.
+- Verifica el fotograma antes de retirar definitivamente la transición.
+- Reemplaza el rail horizontal por un panel fijo con pestañas, título, URL, cierre,
+  espacios, Configuración y Descargas.
+- Integra los fondos claros proporcionados por el usuario: vertical y horizontal.
+- Conserva el fondo oscuro original para Noche.
+- Actualiza README, CHANGELOG, documentación de Termux y matriz de pruebas.
+- Artefacto: `ZenBrowser-v0.1.19-debug`.
+- Release: `ZenBrowser-v0.1.19-debug.apk`.
+
