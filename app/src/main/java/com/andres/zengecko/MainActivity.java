@@ -103,11 +103,13 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private View fixedSidebar;
     private View edgeGestureHandle;
     private PopupWindow sidebarPopup;
+    private FrameLayout sidebarOverlayView;
     private PopupWindow searchPopup;
+    private FrameLayout searchOverlayView;
     private FrameLayout sidebarPanelHost;
     private View sidebarScrim;
     private View sidebarAnimatedPanel;
-    private ZenAddressEditText searchInput;
+    private ZenOmniboxEditText searchInput;
     private LinearLayout searchResults;
     private View searchAnimatedPanel;
     private PopupWindow searchEnginePopup;
@@ -1475,7 +1477,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         if (homeBackgroundView == null) return;
         homeBackgroundView.setImageDrawable(null);
         homeBackgroundView.setImageResource(homeBackgroundResource());
-        homeBackgroundView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        homeBackgroundView.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         applyHomeFocalPoint();
         homeBackgroundView.setBackgroundColor(getColor(R.color.zen_bg));
         if (homeBackgroundScrim != null) {
@@ -1512,7 +1514,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         homeBackgroundView = new ZenFocalImageView(this);
         homeBackgroundView.setImageResource(homeBackgroundResource());
-        homeBackgroundView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        homeBackgroundView.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         applyHomeFocalPoint();
         homeBackgroundView.setBackgroundColor(getColor(R.color.zen_bg));
         surface.addView(homeBackgroundView, new FrameLayout.LayoutParams(
@@ -2003,64 +2005,31 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private View createSidebar() {
-        LinearLayout panel = new LinearLayout(this);
+        LinearLayout panel=new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(10), dp(9), dp(10), dp(9));
-        ZenLiquidGlass.applySurface(this, panel, R.drawable.bg_sidebar_panel,
-                R.drawable.zen_glass_sidebar_day,
-                R.drawable.zen_glass_sidebar_night);
-
-        LinearLayout brand = new LinearLayout(this);
-        brand.setGravity(Gravity.CENTER_VERTICAL);
-        brand.setPadding(dp(9), dp(5), dp(9), dp(5));
-        ZenLiquidGlass.applyGenericSurface(this, brand,
-                R.drawable.bg_brand_header);
-
-        ImageView brandIcon = new ImageView(this);
-        brandIcon.setImageResource(R.drawable.ic_zen_brand_mark);
-        brandIcon.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        brand.addView(brandIcon, new LinearLayout.LayoutParams(dp(38), dp(38)));
-
-        LinearLayout brandLabels = new LinearLayout(this);
-        brandLabels.setOrientation(LinearLayout.VERTICAL);
-        TextView brandTitle = text("ZEN BROWSER", 16, R.color.zen_text);
-        brandTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        TextView brandSubtitle = text("Navegación tranquila", 10, R.color.zen_muted);
-        brandLabels.addView(brandTitle);
-        brandLabels.addView(brandSubtitle);
-        LinearLayout.LayoutParams brandLabelParams =
-                new LinearLayout.LayoutParams(0, dp(46), 1f);
-        brandLabelParams.setMargins(dp(10), 0, 0, 0);
-        brand.addView(brandLabels, brandLabelParams);
-        panel.addView(brand, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
-
-        panel.addView(createSidebarTopActions(), new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46)));
+        panel.setPadding(dp(12),dp(11),dp(12),dp(10));
+        panel.setClipChildren(false);panel.setClipToPadding(false);
+        ZenLiquidGlass.applySurface(this,panel,R.drawable.bg_sidebar_panel,R.drawable.zen_glass_sidebar_day,R.drawable.zen_glass_sidebar_night);
+        LinearLayout brand=new LinearLayout(this);brand.setGravity(Gravity.CENTER_VERTICAL);brand.setPadding(dp(8),dp(5),dp(10),dp(5));
+        ZenLiquidGlass.applyBrandSurface(this,brand,R.drawable.bg_brand_header);
+        FrameLayout host=new FrameLayout(this);host.setBackgroundColor(Color.TRANSPARENT);
+        ImageView icon=new ImageView(this);icon.setImageResource(R.drawable.ic_zen_brand_mark);icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);icon.setPadding(dp(4),dp(4),dp(4),dp(4));
+        host.addView(icon,new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT,Gravity.CENTER));
+        brand.addView(host,new LinearLayout.LayoutParams(dp(44),dp(44)));
+        LinearLayout labels=new LinearLayout(this);labels.setOrientation(LinearLayout.VERTICAL);labels.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title=text("ZEN BROWSER",16,R.color.zen_text);title.setTypeface(Typeface.DEFAULT_BOLD);labels.addView(title);labels.addView(text("Navegación tranquila",9,R.color.zen_muted));
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(48),1f);lp.setMargins(dp(10),0,0,0);brand.addView(labels,lp);
+        panel.addView(brand,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(52)));
+        LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(48));ap.setMargins(0,dp(7),0,dp(4));panel.addView(createSidebarTopActions(),ap);
         panel.addView(createSidebarShortcutGrid());
-
-        sidebarWorkspaceLabel = label(
-                browser.getActiveWorkspaceName().toUpperCase(Locale.ROOT)
-                        + "  ·  PESTAÑAS ABIERTAS");
-        panel.addView(sidebarWorkspaceLabel);
-
-        ScrollView tabsScroll = new ScrollView(this);
-        tabsScroll.setFillViewport(true);
-        tabsScroll.setVerticalScrollBarEnabled(false);
-        sidebarTabsHost = new LinearLayout(this);
-        sidebarTabsHost.setOrientation(LinearLayout.VERTICAL);
-        populateSidebarTabs();
-        tabsScroll.addView(sidebarTabsHost);
-        panel.addView(tabsScroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-
-        View dock = createSidebarDock();
-        LinearLayout.LayoutParams dockParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
-        dockParams.setMargins(0, dp(5), 0, 0);
-        panel.addView(dock, dockParams);
+        sidebarWorkspaceLabel=label(browser.getActiveWorkspaceName().toUpperCase(Locale.ROOT)+"  ·  PESTAÑAS ABIERTAS");sidebarWorkspaceLabel.setPadding(dp(5),dp(8),dp(5),dp(4));panel.addView(sidebarWorkspaceLabel);
+        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setVerticalScrollBarEnabled(false);scroll.setClipToPadding(false);
+        sidebarTabsHost=new LinearLayout(this);sidebarTabsHost.setOrientation(LinearLayout.VERTICAL);sidebarTabsHost.setPadding(0,0,0,dp(4));populateSidebarTabs();scroll.addView(sidebarTabsHost);
+        panel.addView(scroll,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1f));
+        View dock=createSidebarDock();LinearLayout.LayoutParams dpms=new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(48));dpms.setMargins(0,dp(6),0,0);panel.addView(dock,dpms);
         return panel;
     }
+
 
     private View createSidebarTopActions() {
         LinearLayout row = new LinearLayout(this);
@@ -2921,72 +2890,26 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void showSidebarPopup() {
-        if (isImmersiveMode() || appRoot == null) return;
-        dismissSidebarPopupImmediate();
-
-        visualModeTransition = false;
-        final int presentation = ++sidebarPresentationGeneration;
-        if (fixedSidebar != null) fixedSidebar.setVisibility(View.GONE);
-
-        int width = appRoot.getWidth() > 0
-                ? appRoot.getWidth() : getResources().getDisplayMetrics().widthPixels;
-        int height = appRoot.getHeight() > 0
-                ? appRoot.getHeight() : getResources().getDisplayMetrics().heightPixels;
-        int contentWidth = Math.max(dp(280), width - safeInsetLeft - safeInsetRight);
-        int contentHeight = Math.max(dp(320), height - safeInsetTop - safeInsetBottom);
-        boolean landscapePanel = contentWidth > contentHeight;
-        int panelWidth = landscapePanel
-                ? Math.min(dp(430), Math.max(dp(310), Math.round(contentWidth * .48f)))
-                : Math.min(dp(390), Math.max(dp(280), Math.round(contentWidth * .92f)));
-
-        View overlay = createSidebarOverlay(panelWidth);
-        final PopupWindow popup = new PopupWindow(
-                overlay,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                true);
-        sidebarPopup = popup;
-        popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-        popup.setOutsideTouchable(false);
-        popup.setClippingEnabled(false);
-        popup.setElevation(0f);
-        popup.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
-        popup.setOnDismissListener(() -> {
-            if (sidebarPopup != popup
-                    || presentation != sidebarPresentationGeneration) {
-                return;
-            }
-            clearSidebarPresentationReferences();
-            if (!visualModeTransition && isActivityUsable()) {
-                mainHandler.post(() -> applyResponsiveLayout(
-                        getResources().getConfiguration()));
-            }
-        });
-        lastPopupSidebarFingerprint = sidebarFingerprint();
-        popup.showAtLocation(appRoot, Gravity.START | Gravity.TOP, 0, 0);
-
-        if (sidebarScrim != null) {
-            sidebarScrim.setAlpha(0f);
-            sidebarScrim.animate().alpha(1f).setDuration(170L).start();
-        }
-        if (sidebarAnimatedPanel != null) {
-            sidebarAnimatedPanel.setTranslationX(
-                    -panelWidth - safeInsetLeft - dp(12));
-            sidebarAnimatedPanel.animate()
-                    .translationX(0f)
-                    .setDuration(210L)
-                    .setInterpolator(
-                            new android.view.animation.DecelerateInterpolator())
-                    .start();
-        }
+        if(isImmersiveMode()||appRoot==null)return;
+        dismissSidebarPopupImmediate();visualModeTransition=false;final int presentation=++sidebarPresentationGeneration;
+        if(fixedSidebar!=null)fixedSidebar.setVisibility(View.GONE);
+        int width=appRoot.getWidth()>0?appRoot.getWidth():getResources().getDisplayMetrics().widthPixels;
+        int height=appRoot.getHeight()>0?appRoot.getHeight():getResources().getDisplayMetrics().heightPixels;
+        int cw=Math.max(dp(280),width-safeInsetLeft-safeInsetRight),ch=Math.max(dp(320),height-safeInsetTop-safeInsetBottom);
+        boolean landscape=cw>ch;int panelWidth=landscape?Math.min(dp(430),Math.max(dp(310),Math.round(cw*.48f))):Math.min(dp(404),Math.max(dp(286),Math.round(cw*.92f)));
+        sidebarOverlayView=(FrameLayout)createSidebarOverlay(panelWidth);sidebarOverlayView.setTag(presentation);
+        appRoot.addView(sidebarOverlayView,new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
+        lastPopupSidebarFingerprint=sidebarFingerprint();
+        if(sidebarScrim!=null){sidebarScrim.setAlpha(0f);sidebarScrim.animate().alpha(1f).setDuration(150L).start();}
+        if(sidebarAnimatedPanel!=null){sidebarAnimatedPanel.setTranslationX(-panelWidth-safeInsetLeft-dp(12));sidebarAnimatedPanel.animate().translationX(0f).setDuration(190L).setInterpolator(new android.view.animation.DecelerateInterpolator()).start();}
     }
+
 
     private View createSidebarOverlay(int panelWidth) {
         FrameLayout overlay = new FrameLayout(this);
         overlay.setBackgroundColor(Color.TRANSPARENT);
         overlay.setClipChildren(false);
         overlay.setClipToPadding(false);
-        ZenLiquidGlass.installCapturedBackdrop(this, overlay, geckoView);
 
         sidebarScrim = new View(this);
         sidebarScrim.setBackgroundColor(ZenTheme.sidebarScrim(this));
@@ -3018,53 +2941,36 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void refreshSidebarPopup() {
-        if (sidebarPopup == null || !sidebarPopup.isShowing()
-                || sidebarPanelHost == null) return;
-        if (sidebarRefreshRunnable != null) {
-            mainHandler.removeCallbacks(sidebarRefreshRunnable);
-        }
-        final PopupWindow expectedPopup = sidebarPopup;
-        sidebarRefreshRunnable = () -> {
-            sidebarRefreshRunnable = null;
-            if (sidebarPopup != expectedPopup || !expectedPopup.isShowing()) return;
-            populateSidebarTabs();
-            updateSidebarWorkspaceChrome();
-            lastPopupSidebarFingerprint = sidebarFingerprint();
-        };
-        mainHandler.postDelayed(sidebarRefreshRunnable, 24L);
+        if(sidebarOverlayView==null||sidebarOverlayView.getParent()==null||sidebarPanelHost==null)return;
+        if(sidebarRefreshRunnable!=null)mainHandler.removeCallbacks(sidebarRefreshRunnable);
+        final FrameLayout expected=sidebarOverlayView;
+        sidebarRefreshRunnable=()->{sidebarRefreshRunnable=null;if(sidebarOverlayView!=expected||expected.getParent()==null)return;populateSidebarTabs();updateSidebarWorkspaceChrome();lastPopupSidebarFingerprint=sidebarFingerprint();};
+        mainHandler.postDelayed(sidebarRefreshRunnable,24L);
     }
 
+
     private void dismissSidebarPopup() {
-        PopupWindow popup = sidebarPopup;
-        if (popup == null || !popup.isShowing()) return;
-        View panel = sidebarAnimatedPanel;
-        View scrim = sidebarScrim;
-        if (scrim != null) scrim.animate().alpha(0f).setDuration(150).start();
-        if (panel != null) {
-            panel.animate().translationX(-panel.getWidth()).setDuration(170)
-                    .setInterpolator(new android.view.animation.AccelerateInterpolator())
-                    .withEndAction(() -> { if (popup.isShowing()) popup.dismiss(); }).start();
-        } else {
-            popup.dismiss();
-        }
+        final FrameLayout overlay=sidebarOverlayView;if(overlay==null||overlay.getParent()==null)return;
+        if(sidebarScrim!=null)sidebarScrim.animate().alpha(0f).setDuration(120L).start();
+        View panel=sidebarAnimatedPanel;if(panel!=null)panel.animate().translationX(-panel.getWidth()).alpha(.96f).setDuration(155L).setInterpolator(new android.view.animation.AccelerateInterpolator()).withEndAction(()->removeSidebarOverlay(overlay)).start();else removeSidebarOverlay(overlay);
     }
+
 
     private void dismissSidebarPopupImmediate() {
         sidebarPresentationGeneration++;
-        PopupWindow popup = sidebarPopup;
-        if (popup != null) {
-            popup.setOnDismissListener(null);
-            try {
-                if (popup.isShowing()) popup.dismiss();
-            } catch (RuntimeException error) {
-                Log.w(TAG, "Unable to dismiss stale sidebar popup", error);
-            }
-        }
-        clearSidebarPresentationReferences();
-        if (!visualModeTransition && fixedSidebar != null) {
-            fixedSidebar.setVisibility(wideLayout ? View.VISIBLE : View.GONE);
-        }
+        if(sidebarRefreshRunnable!=null){mainHandler.removeCallbacks(sidebarRefreshRunnable);sidebarRefreshRunnable=null;}
+        if(sidebarAnimatedPanel!=null)sidebarAnimatedPanel.animate().cancel();if(sidebarScrim!=null)sidebarScrim.animate().cancel();
+        FrameLayout overlay=sidebarOverlayView;if(overlay!=null)removeSidebarOverlay(overlay);
+        PopupWindow stale=sidebarPopup;if(stale!=null){stale.setOnDismissListener(null);try{if(stale.isShowing())stale.dismiss();}catch(RuntimeException e){Log.w(TAG,"Unable to dismiss legacy sidebar",e);}}
+        clearSidebarPresentationReferences();sidebarOverlayView=null;
+        if(!visualModeTransition&&fixedSidebar!=null)fixedSidebar.setVisibility(wideLayout?View.VISIBLE:View.GONE);
     }
+
+    private void removeSidebarOverlay(FrameLayout overlay){
+        if(overlay==null)return;overlay.animate().cancel();ViewParent parent=overlay.getParent();if(parent instanceof ViewGroup)((ViewGroup)parent).removeView(overlay);
+        if(sidebarOverlayView==overlay){sidebarOverlayView=null;clearSidebarPresentationReferences();if(!visualModeTransition&&fixedSidebar!=null)fixedSidebar.setVisibility(wideLayout?View.VISIBLE:View.GONE);}
+    }
+
 
     private void clearSidebarPresentationReferences() {
         sidebarPopup = null;
@@ -3124,246 +3030,25 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void showSearchPopup(boolean newTabMode) {
-        if (isImmersiveMode()) return;
-        dismissSearchPopupImmediate();
-
-        int availableWidth = Math.max(
-                dp(260),
-                getResources().getDisplayMetrics().widthPixels
-                        - safeInsetLeft - safeInsetRight);
-        int measuredHeight = appRoot == null ? 0 : appRoot.getHeight();
-        int availableHeight = Math.max(
-                dp(320),
-                measuredHeight - safeInsetTop - safeInsetBottom);
-
-        BrowserTab editingTab =
-                browser == null ? null : browser.getActiveTab();
-        searchEditingTabId = editingTab == null ? "" : editingTab.id;
-        searchDraftDirty = editingTab != null
-                && editingTab.addressDraftActive;
-
-        FrameLayout overlay = new FrameLayout(this);
-        overlay.setBackgroundColor(Color.TRANSPARENT);
-        ZenLiquidGlass.installCapturedBackdrop(this, overlay, geckoView);
-        View scrim = new View(this);
-        scrim.setBackgroundColor(ZenTheme.searchScrim(this));
-        scrim.setOnClickListener(v -> dismissSearchPopup());
-        overlay.addView(scrim, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(12), dp(12), dp(12), dp(12));
-        ZenLiquidGlass.applySurface(this, panel, R.drawable.bg_search_panel,
-                R.drawable.zen_glass_search_day,
-                R.drawable.zen_glass_search_night);
-        searchAnimatedPanel = panel;
-
-        LinearLayout searchBar = new LinearLayout(this);
-        searchBar.setGravity(Gravity.CENTER_VERTICAL);
-
-        searchInput = new ZenAddressEditText(this);
-        searchInput.setTextColor(getColor(R.color.zen_text));
-        searchInput.setHintTextColor(getColor(R.color.zen_muted));
-        searchInput.setTextSize(16);
-        searchInput.setHint("Buscar o escribir una dirección");
-        ZenLiquidGlass.applyInputSurface(this, searchInput,
-                R.drawable.bg_address);
-        searchInput.setPadding(dp(16), 0, dp(16), 0);
-
-        String initial;
-        if (editingTab != null && editingTab.addressDraftActive) {
-            initial = safe(editingTab.addressDraft);
-        } else {
-            initial = newTabMode ? "" : activeUrlForEditing();
-        }
-        searchInput.setText(initial);
-
-        int initialStart = initial.length();
-        int initialEnd = initial.length();
-        if (editingTab != null && editingTab.addressDraftActive) {
-            initialStart = Math.max(
-                    0, Math.min(initial.length(),
-                            editingTab.addressSelectionStart));
-            initialEnd = Math.max(
-                    0, Math.min(initial.length(),
-                            editingTab.addressSelectionEnd));
-        } else if (!initial.isEmpty()) {
-            initialStart = 0;
-            initialEnd = initial.length();
-        }
-        try {
-            searchInput.setSelection(initialStart, initialEnd);
-        } catch (IndexOutOfBoundsException ignored) {
-            searchInput.setSelection(initial.length());
-        }
-
-        searchInput.setSelectionListener((start, end) -> {
-            BrowserTab target = browser == null
-                    ? null : browser.getTab(searchEditingTabId);
-            if (target == null) return;
-            target.addressSelectionStart = start;
-            target.addressSelectionEnd = end;
-        });
-
-        LinearLayout.LayoutParams inputParams =
-                new LinearLayout.LayoutParams(0, dp(46), 1f);
-        inputParams.setMargins(0, 0, dp(7), 0);
-        searchBar.addView(searchInput, inputParams);
-
-        searchEngineButton = createSearchEngineButton();
-        searchEngineButton.setOnClickListener(
-                v -> showSearchEngineMenu(searchEngineButton));
-        searchBar.addView(searchEngineButton, square(46));
-        panel.addView(searchBar);
-
-        ScrollView resultsScroll = new ScrollView(this);
-        resultsScroll.setFillViewport(false);
-        searchResults = new LinearLayout(this);
-        searchResults.setOrientation(LinearLayout.VERTICAL);
-        searchResults.setPadding(0, dp(8), 0, dp(6));
-        resultsScroll.addView(searchResults);
-        panel.addView(resultsScroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-
-        boolean landscapeSearch = availableWidth > availableHeight;
-        int panelWidth = landscapeSearch
-                ? Math.min(dp(470), Math.max(dp(320), Math.round(availableWidth * .48f)))
-                : Math.max(dp(280), availableWidth - dp(20));
-        int requestedPanelHeight = landscapeSearch
-                ? Math.max(dp(250), availableHeight - dp(16))
-                : Math.min(dp(590), Math.max(dp(320), Math.round(availableHeight * .78f)));
-        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
-                panelWidth,
-                requestedPanelHeight,
-                landscapeSearch
-                        ? Gravity.TOP | Gravity.START
-                        : Gravity.TOP | Gravity.CENTER_HORIZONTAL);
-        panelParams.leftMargin = landscapeSearch ? dp(8) : 0;
-        panelParams.topMargin = landscapeSearch ? dp(8) : dp(10);
-        panelParams.bottomMargin = dp(8);
-        overlay.addView(panel, panelParams);
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            overlay.setOnApplyWindowInsetsListener((view, insets) -> {
-                Insets ime = insets.getInsets(WindowInsets.Type.ime());
-                int viewHeight = Math.max(dp(240), view.getHeight());
-                int usable = Math.max(dp(240),
-                        viewHeight - ime.bottom - safeInsetTop - safeInsetBottom - dp(16));
-                int target = landscapeSearch
-                        ? usable
-                        : Math.min(requestedPanelHeight, usable);
-                if (panelParams.height != target) {
-                    panelParams.height = target;
-                    panel.setLayoutParams(panelParams);
-                }
-                return insets;
-            });
-            overlay.requestApplyInsets();
-        }
-
-        searchPopup = new PopupWindow(
-                overlay, availableWidth, availableHeight, true);
-        searchPopup.setBackgroundDrawable(
-                new ColorDrawable(Color.TRANSPARENT));
-        searchPopup.setInputMethodMode(PopupWindow.INPUT_METHOD_NEEDED);
-        searchPopup.setSoftInputMode(
-                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
-        searchPopup.setClippingEnabled(true);
-        searchPopup.setElevation(dp(24));
-        searchPopup.setOnDismissListener(() -> {
-            saveSearchDraftFromEditor();
-            dismissSearchEnginePopupImmediate();
-            searchPopup = null;
-            searchInput = null;
-            searchResults = null;
-            searchAnimatedPanel = null;
-            searchEngineButton = null;
-            searchEditingTabId = "";
-            searchDraftDirty = false;
-        });
-        searchPopup.showAtLocation(
-                appRoot,
-                Gravity.START | Gravity.TOP,
-                safeInsetLeft,
-                safeInsetTop);
-
-        searchInput.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(
-                    CharSequence value, int start, int count, int after) { }
-
-            @Override public void onTextChanged(
-                    CharSequence value, int start, int before, int count) {
-                String text = value == null ? "" : value.toString();
-                searchDraftDirty = true;
-                BrowserTab target = browser == null
-                        ? null : browser.getTab(searchEditingTabId);
-                if (target != null) {
-                    target.addressDraft = text;
-                    target.addressDraftActive = true;
-                    int cursor = searchInput == null
-                            ? text.length()
-                            : Math.max(0, searchInput.getSelectionStart());
-                    target.addressSelectionStart = cursor;
-                    target.addressSelectionEnd = searchInput == null
-                            ? cursor
-                            : Math.max(0, searchInput.getSelectionEnd());
-                    updateAddressSurfaces(target);
-                }
-                refreshSearchResults(text);
-            }
-
-            @Override public void afterTextChanged(Editable value) { }
-        });
-
-        searchInput.setOnEditorActionListener((v, actionId, event) -> {
-            boolean enter = event != null
-                    && event.getKeyCode() == KeyEvent.KEYCODE_ENTER
-                    && event.getAction() == KeyEvent.ACTION_DOWN;
-            boolean submit = actionId == EditorInfo.IME_ACTION_SEARCH
-                    || actionId == EditorInfo.IME_ACTION_GO
-                    || actionId == EditorInfo.IME_ACTION_DONE
-                    || actionId == EditorInfo.IME_ACTION_UNSPECIFIED;
-            if (submit || enter) {
-                submitSearch(searchInput.getText().toString());
-                return true;
-            }
-            return false;
-        });
-
-        refreshSearchResults(initial);
-        scrim.setAlpha(0f);
-        scrim.animate().alpha(1f).setDuration(160L).start();
-        panel.setAlpha(0f);
-        panel.setTranslationY(-dp(14));
-        panel.animate()
-                .alpha(1f)
-                .translationY(0f)
-                .setDuration(190L)
-                .setInterpolator(
-                        new android.view.animation.DecelerateInterpolator())
-                .start();
-
-        searchInput.post(() -> {
-            if (searchInput == null || searchPopup == null
-                    || !searchPopup.isShowing()) {
-                return;
-            }
-            searchInput.requestFocus();
-            showKeyboard(searchInput);
-            if (selectAllSearchOnOpen) {
-                selectAllSearchOnOpen = false;
-                searchInput.postDelayed(() -> {
-                    if (searchInput == null || searchPopup == null
-                            || !searchPopup.isShowing()) {
-                        return;
-                    }
-                    searchInput.setSelection(searchInput.length());
-                }, 220L);
-            }
-        });
+        if(isImmersiveMode()||appRoot==null)return;dismissSearchPopupImmediate();
+        int aw=Math.max(dp(260),appRoot.getWidth()-safeInsetLeft-safeInsetRight),ah=Math.max(dp(300),appRoot.getHeight()-safeInsetTop-safeInsetBottom);
+        BrowserTab editing=browser==null?null:browser.getActiveTab();searchEditingTabId=editing==null?"":editing.id;searchDraftDirty=editing!=null&&editing.addressDraftActive;
+        FrameLayout overlay=new FrameLayout(this);overlay.setBackgroundColor(Color.TRANSPARENT);overlay.setClickable(true);searchOverlayView=overlay;
+        View scrim=new View(this);scrim.setBackgroundColor(ZenTheme.searchScrim(this));scrim.setOnClickListener(v->dismissSearchPopup());overlay.addView(scrim,new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
+        LinearLayout panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);panel.setPadding(dp(12),dp(12),dp(12),dp(10));ZenLiquidGlass.applySurface(this,panel,R.drawable.bg_search_panel,R.drawable.zen_glass_search_day,R.drawable.zen_glass_search_night);searchAnimatedPanel=panel;
+        LinearLayout bar=new LinearLayout(this);bar.setGravity(Gravity.CENTER_VERTICAL);searchInput=new ZenOmniboxEditText(this);searchInput.setTextColor(getColor(R.color.zen_text));searchInput.setHintTextColor(getColor(R.color.zen_muted));searchInput.setTextSize(16);searchInput.setHint("Buscar o escribir una dirección");ZenLiquidGlass.applyInputSurface(this,searchInput,R.drawable.bg_address);searchInput.setPadding(dp(16),0,dp(16),0);
+        String initial=editing!=null&&editing.addressDraftActive?safe(editing.addressDraft):(newTabMode?"":activeUrlForEditing());searchInput.setText(initial);int s=initial.length(),e=initial.length();if(editing!=null&&editing.addressDraftActive){s=Math.max(0,Math.min(initial.length(),editing.addressSelectionStart));e=Math.max(0,Math.min(initial.length(),editing.addressSelectionEnd));}else if(!initial.isEmpty()){s=0;e=initial.length();}try{searchInput.setSelection(s,e);}catch(IndexOutOfBoundsException ignored){searchInput.setSelection(initial.length());}
+        searchInput.setSelectionListener((a,b)->{BrowserTab t=browser==null?null:browser.getTab(searchEditingTabId);if(t!=null){t.addressSelectionStart=a;t.addressSelectionEnd=b;}});
+        LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(0,dp(50),1f);ip.setMargins(0,0,dp(7),0);bar.addView(searchInput,ip);searchEngineButton=createSearchEngineButton();searchEngineButton.setOnClickListener(v->showSearchEngineMenu(searchEngineButton));bar.addView(searchEngineButton,square(50));panel.addView(bar);
+        ScrollView rs=new ScrollView(this);rs.setFillViewport(false);searchResults=new LinearLayout(this);searchResults.setOrientation(LinearLayout.VERTICAL);searchResults.setPadding(0,dp(8),0,dp(6));rs.addView(searchResults);panel.addView(rs,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1f));
+        boolean landscape=aw>ah;int pw=landscape?Math.min(dp(500),Math.max(dp(340),Math.round(aw*.50f))):Math.max(dp(284),aw-dp(20));int ph=landscape?Math.max(dp(240),ah-dp(16)):Math.min(dp(610),Math.max(dp(320),Math.round(ah*.80f)));
+        FrameLayout.LayoutParams pp=new FrameLayout.LayoutParams(pw,ph,landscape?Gravity.TOP|Gravity.START:Gravity.TOP|Gravity.CENTER_HORIZONTAL);pp.leftMargin=landscape?dp(8):0;pp.topMargin=dp(10);pp.bottomMargin=dp(8);overlay.addView(panel,pp);appRoot.addView(overlay,new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));
+        if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.R){overlay.setOnApplyWindowInsetsListener((v,insets)->{Insets ime=insets.getInsets(WindowInsets.Type.ime());int usable=Math.max(dp(220),v.getHeight()-ime.bottom-safeInsetTop-safeInsetBottom-dp(16));int target=landscape?usable:Math.min(ph,usable);if(pp.height!=target){pp.height=target;panel.setLayoutParams(pp);}return insets;});overlay.requestApplyInsets();}
+        searchInput.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence v,int a,int b,int c){}public void onTextChanged(CharSequence v,int a,int b,int c){String value=v==null?"":v.toString();searchDraftDirty=true;BrowserTab t=browser==null?null:browser.getTab(searchEditingTabId);if(t!=null){t.addressDraft=value;t.addressDraftActive=true;t.addressSelectionStart=Math.max(0,searchInput.getSelectionStart());t.addressSelectionEnd=Math.max(0,searchInput.getSelectionEnd());updateAddressSurfaces(t);}refreshSearchResults(value);}public void afterTextChanged(Editable v){}});
+        searchInput.setOnEditorActionListener((v,action,event)->{boolean enter=event!=null&&event.getKeyCode()==KeyEvent.KEYCODE_ENTER&&event.getAction()==KeyEvent.ACTION_DOWN;if(enter||action==EditorInfo.IME_ACTION_SEARCH||action==EditorInfo.IME_ACTION_GO||action==EditorInfo.IME_ACTION_DONE){submitSearch(searchInput.getText().toString());return true;}return false;});
+        refreshSearchResults(initial);scrim.setAlpha(0f);scrim.animate().alpha(1f).setDuration(130L).start();panel.setAlpha(0f);panel.setTranslationY(-dp(10));panel.animate().alpha(1f).translationY(0f).setDuration(165L).setInterpolator(new android.view.animation.DecelerateInterpolator()).start();searchInput.post(()->{if(searchInput==null||searchOverlayView==null)return;searchInput.requestFocus();showKeyboard(searchInput);});
     }
+
 
 
     private TextView createSearchEngineButton() {
@@ -3594,39 +3279,17 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
 
     private void dismissSearchPopup() {
-        saveSearchDraftFromEditor();
-        dismissSearchEnginePopupImmediate();
-        PopupWindow popup = searchPopup;
-        if (popup == null || !popup.isShowing()) return;
-        hideKeyboard(searchInput);
-        View panel = searchAnimatedPanel;
-        if (panel != null) {
-            panel.animate()
-                    .alpha(0f)
-                    .translationY(-dp(10))
-                    .setDuration(145L)
-                    .withEndAction(() -> {
-                        if (popup.isShowing()) popup.dismiss();
-                    })
-                    .start();
-        } else {
-            popup.dismiss();
-        }
+        saveSearchDraftFromEditor();dismissSearchEnginePopupImmediate();final FrameLayout overlay=searchOverlayView;if(overlay==null||overlay.getParent()==null)return;hideKeyboard(searchInput);View panel=searchAnimatedPanel;if(panel!=null)panel.animate().alpha(0f).translationY(-dp(8)).setDuration(125L).withEndAction(()->removeSearchOverlay(overlay)).start();else removeSearchOverlay(overlay);
     }
+
 
 
     private void dismissSearchPopupImmediate() {
-        saveSearchDraftFromEditor();
-        dismissSearchEnginePopupImmediate();
-        if (searchPopup != null) searchPopup.dismiss();
-        searchPopup = null;
-        searchInput = null;
-        searchResults = null;
-        searchAnimatedPanel = null;
-        searchEngineButton = null;
-        searchEditingTabId = "";
-        searchDraftDirty = false;
+        saveSearchDraftFromEditor();dismissSearchEnginePopupImmediate();if(searchAnimatedPanel!=null)searchAnimatedPanel.animate().cancel();FrameLayout overlay=searchOverlayView;if(overlay!=null)removeSearchOverlay(overlay);if(searchPopup!=null){try{searchPopup.dismiss();}catch(RuntimeException ignored){}searchPopup=null;}clearSearchReferences();
     }
+    private void removeSearchOverlay(FrameLayout overlay){if(overlay==null)return;ViewParent parent=overlay.getParent();if(parent instanceof ViewGroup)((ViewGroup)parent).removeView(overlay);if(searchOverlayView==overlay){searchOverlayView=null;clearSearchReferences();}}
+    private void clearSearchReferences(){searchInput=null;searchResults=null;searchAnimatedPanel=null;searchEngineButton=null;searchEditingTabId="";searchDraftDirty=false;}
+
 
 
     private void promptWorkspace() {
@@ -4220,7 +3883,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         header.setPadding(dp(4), dp(2), dp(4), dp(7));
 
         ImageView preview = new ImageView(this);
-        preview.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        preview.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         preview.setBackgroundResource(R.drawable.bg_context_preview);
         preview.setImageResource(image
                 ? R.drawable.ic_preview

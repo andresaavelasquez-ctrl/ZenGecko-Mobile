@@ -366,3 +366,11 @@ secundaria o redirección que invoque `onNewSession`.
 - Limpieza atómica de paneles al cambiar tema/orientación.
 - Icono adaptativo corregido con la Z exacta proporcionada.
 - versionCode 26 / versionName 0.1.25.
+
+## v0.1.26 — Vertical, Omnibox & Glass Rebuild
+
+- Panel vertical y buscador migrados de PopupWindow a overlays únicos de appRoot.
+- Omnibox nativo sin interceptores táctiles.
+- Cristal sin captura o duplicado de GeckoView.
+- Icono exacto reducido y centrado.
+- versionCode 27 / versionName 0.1.26.
