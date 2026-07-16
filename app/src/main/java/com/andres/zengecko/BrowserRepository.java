@@ -7,7 +7,9 @@ import android.os.SystemClock;
 import android.util.Log;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.net.URI;
 import java.util.UUID;
 import org.json.JSONArray;
@@ -24,9 +26,11 @@ import com.andres.zengecko.model.Workspace;
 public final class BrowserRepository {
     private static final String TAG = "ZenGecko/Browser";
     private static final long BLANK_TAB_GUARD_MS = 650L;
-    private long lastPopupRequestAt;
-    private String lastPopupRequestUri = "";
-    private String lastPopupTabId = "";
+    private static final long POPUP_REUSE_WINDOW_MS = 1800L;
+    private static final int POPUP_SESSION_CREATED = 1;
+    private static final int POPUP_REDIRECT_CHAIN = 2;
+    private static final int POPUP_STABLE = 3;
+    private final Map<String, String> pendingPopupBySource = new HashMap<>();
     public static final String INTERNAL_SETTINGS_URL = "zen://settings";
 
     public interface Observer {
@@ -112,6 +116,7 @@ public final class BrowserRepository {
     public List<String> getRecentUrls() { return Collections.unmodifiableList(recentUrls); }
     public String getActiveWorkspaceId() { return activeWorkspaceId; }
     public String getActiveTabId() { return activeTabId; }
+    public BrowserTab getTab(String tabId) { return findTab(tabId); }
     public SearchEngine getSearchEngine() { return searchEngine; }
     public boolean canRestoreLastClosedTab() { return lastClosedTab != null; }
 
@@ -278,6 +283,7 @@ public final class BrowserRepository {
         lastClosedTab = new ClosedTab(closingIndex, closing);
         boolean closingActive = tabId.equals(activeTabId);
 
+        releasePopupTracking(closing);
         if (closing.session != null) closing.session.close();
         tabs.remove(closing);
 
@@ -391,40 +397,113 @@ public final class BrowserRepository {
         return searchEngine.buildSearchUrl(value);
     }
 
-    private BrowserTab createPopupTab(String requestedUri) {
+    private BrowserTab createPopupTab(
+            GeckoSession source, String requestedUri) {
+        BrowserTab opener = findTabBySession(source);
+        String sourceId = opener == null
+                ? "session:" + Integer.toHexString(
+                        System.identityHashCode(source))
+                : opener.id;
         String target = requestedUri == null || requestedUri.trim().isEmpty()
                 ? "about:blank" : requestedUri.trim();
         long now = SystemClock.elapsedRealtime();
-        if (now - lastPopupRequestAt < 260L
-                && target.equals(lastPopupRequestUri)) {
-            BrowserTab duplicated = findTab(lastPopupTabId);
-            if (duplicated != null && duplicated.session != null
-                    && duplicated.session.isOpen()) {
-                Log.w(TAG, "Cancelled duplicated popup request for " + target);
-                return null;
+
+        String pendingId = pendingPopupBySource.get(sourceId);
+        BrowserTab pending = findTab(pendingId);
+        if (pending != null
+                && pending.popupWindow
+                && !pending.popupStable
+                && pending.session != null
+                && pending.session.isOpen()
+                && now - pending.popupAcceptedAtElapsed
+                        < POPUP_REUSE_WINDOW_MS) {
+            boolean sameTarget = target.equals(pending.popupRequestKey);
+            boolean transitionalBlank = "about:blank".equals(target)
+                    || "about:blank".equals(pending.popupRequestKey);
+            if (sameTarget || transitionalBlank) {
+                if (!"about:blank".equals(target)) {
+                    pending.popupRequestKey = target;
+                }
+                Log.i(TAG, "Reused popup GeckoSession tab=" + pending.id
+                        + " source=" + sourceId + " target=" + target);
+                focusPopupIfAppropriate(pending);
+                return pending;
             }
         }
 
-        lastPopupRequestAt = now;
-        lastPopupRequestUri = target;
-        BrowserTab popup = addTabInternal(target, true, false);
+        if (pending != null && pending.popupStable) {
+            pendingPopupBySource.remove(sourceId);
+        }
+
+        BrowserTab popup = addTabInternal(target, false, false);
         popup.popupWindow = true;
+        popup.openerTabId = sourceId;
+        popup.popupRequestKey = target;
+        popup.popupStable = false;
+        popup.popupState = POPUP_SESSION_CREATED;
+        popup.popupAcceptedAtElapsed = now;
         popup.showStartPage = false;
         popup.hasValidPaint = false;
         popup.loading = true;
-        lastPopupTabId = popup.id;
+        pendingPopupBySource.put(sourceId, popup.id);
 
-        // Return the opened GeckoSession before notifying/attaching the UI.
         new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
             BrowserTab current = findTab(popup.id);
-            if (current == null) return;
-            activeWorkspaceId = current.workspaceId;
-            activeTabId = current.id;
-            updateSessionActivity();
+            if (current == null || current.session == null
+                    || !current.session.isOpen()) {
+                return;
+            }
+            focusPopupIfAppropriate(current);
             persistAndNotify();
         });
         return popup;
     }
+
+    private BrowserTab findTabBySession(GeckoSession session) {
+        if (session == null) return null;
+        for (BrowserTab item : tabs) {
+            if (item.session == session) return item;
+        }
+        return null;
+    }
+
+    private boolean shouldFocusPopup(BrowserTab popup) {
+        if (popup == null || !popup.popupWindow || popup.popupStable) {
+            return false;
+        }
+        if (popup.id.equals(activeTabId)) return true;
+        return popup.openerTabId != null
+                && popup.openerTabId.equals(activeTabId);
+    }
+
+    private void focusPopupIfAppropriate(BrowserTab popup) {
+        if (!shouldFocusPopup(popup)) return;
+        activeWorkspaceId = popup.workspaceId;
+        activeTabId = popup.id;
+        updateSessionActivity();
+    }
+
+    private void markPopupStable(BrowserTab popup, String reason) {
+        if (popup == null || !popup.popupWindow || popup.popupStable) return;
+        popup.popupStable = true;
+        popup.popupState = POPUP_STABLE;
+        if (popup.openerTabId != null
+                && popup.id.equals(
+                        pendingPopupBySource.get(popup.openerTabId))) {
+            pendingPopupBySource.remove(popup.openerTabId);
+        }
+        Log.i(TAG, "Popup stable tab=" + popup.id + " reason=" + reason);
+    }
+
+    private void releasePopupTracking(BrowserTab popup) {
+        if (popup == null || !popup.popupWindow) return;
+        if (popup.openerTabId != null
+                && popup.id.equals(
+                        pendingPopupBySource.get(popup.openerTabId))) {
+            pendingPopupBySource.remove(popup.openerTabId);
+        }
+    }
+
 
     private BrowserTab addTabInternal(String url, boolean select, boolean load) {
         BrowserTab tab = new BrowserTab(UUID.randomUUID().toString(), activeWorkspaceId, "Nueva pestaña", url);
@@ -481,6 +560,7 @@ public final class BrowserRepository {
             @Override public void onFirstContentfulPaint(GeckoSession source) {
                 Log.i(TAG, "onFirstContentfulPaint tab=" + tab.id);
                 tab.hasValidPaint = true;
+                markPopupStable(tab, "first-contentful-paint");
                 if (tab.id.equals(activeTabId)) notifyFirstContentfulPaint(source);
             }
 
@@ -517,13 +597,13 @@ public final class BrowserRepository {
                     if (!"about:blank".equals(url)) tab.showStartPage = false;
                     recordRecentUrl(url);
                 }
-                if (tab.popupWindow
-                        && SystemClock.elapsedRealtime() - tab.createdAtElapsed < 7000L
-                        && !tab.id.equals(activeTabId)) {
-                    activeWorkspaceId = tab.workspaceId;
-                    activeTabId = tab.id;
-                    updateSessionActivity();
-                    Log.d(TAG, "Focused popup tab during redirect: " + tab.id);
+                tab.lastLocationChangeElapsed =
+                        SystemClock.elapsedRealtime();
+                if (tab.popupWindow && !tab.popupStable) {
+                    tab.popupState = POPUP_REDIRECT_CHAIN;
+                    focusPopupIfAppropriate(tab);
+                    Log.d(TAG, "Popup redirect tab=" + tab.id
+                            + " url=" + url);
                 }
                 persistAndNotify();
             }
@@ -538,23 +618,25 @@ public final class BrowserRepository {
             @Override public GeckoResult<GeckoSession> onNewSession(
                     GeckoSession source, String uri) {
                 try {
-                    BrowserTab popup = createPopupTab(uri);
-                    if (popup == null) {
-                        return GeckoResult.fromValue((GeckoSession) null);
+                    BrowserTab popup = createPopupTab(source, uri);
+                    if (popup == null || popup.session == null) {
+                        throw new IllegalStateException(
+                                "Popup session was not created");
                     }
-                    Log.i(TAG, "Popup session created tab=" + popup.id
+                    Log.i(TAG, "Popup session returned tab=" + popup.id
                             + " source=" + Integer.toHexString(
                                     System.identityHashCode(source)));
                     return GeckoResult.fromValue(popup.session);
                 } catch (Throwable error) {
                     Log.e(TAG, "Unable to create popup session", error);
-                    return GeckoResult.fromValue((GeckoSession) null);
+                    return GeckoResult.fromException(error);
                 }
             }
             @Override public GeckoResult<String> onLoadError(
                     GeckoSession ignored, String uri, WebRequestError error) {
                 tab.title = "No se pudo cargar";
                 tab.loading = false;
+                markPopupStable(tab, "load-error");
                 notifyObservers();
                 return null;
             }
@@ -570,12 +652,9 @@ public final class BrowserRepository {
                 tab.url = url;
                 tab.showStartPage = url == null || "about:blank".equals(url);
                 tab.hasValidPaint = tab.showStartPage;
-                if (tab.popupWindow
-                        && SystemClock.elapsedRealtime() - tab.createdAtElapsed < 7000L
-                        && !tab.id.equals(activeTabId)) {
-                    activeWorkspaceId = tab.workspaceId;
-                    activeTabId = tab.id;
-                    updateSessionActivity();
+                if (tab.popupWindow && !tab.popupStable) {
+                    tab.popupState = POPUP_REDIRECT_CHAIN;
+                    focusPopupIfAppropriate(tab);
                 }
                 notifyPageStarted(source, url, hadValidPaint);
                 notifyObservers();
@@ -593,6 +672,9 @@ public final class BrowserRepository {
                 tab.progress = 100;
                 recordRecentUrl(tab.url);
                 if (success) HistoryStore.record(context, tab.title, tab.url);
+                if (success && tab.hasValidPaint) {
+                    markPopupStable(tab, "page-stop");
+                }
                 persistAndNotify();
                 notifyPageFinished(source, success);
             }

@@ -18,6 +18,16 @@ public final class BrowserTab {
     public int progress;
     public int navigationSerial;
     public boolean popupWindow;
+    public String openerTabId = "";
+    public String popupRequestKey = "";
+    public boolean popupStable;
+    public int popupState;
+    public long popupAcceptedAtElapsed;
+    public long lastLocationChangeElapsed;
+    public String addressDraft = "";
+    public boolean addressDraftActive;
+    public int addressSelectionStart;
+    public int addressSelectionEnd;
     public long createdAtElapsed;
     public GeckoSession session;
 

@@ -167,6 +167,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private boolean sidebarWorkspaceTransition;
     private String lastExternalIntentKey = "";
     private long lastExternalIntentAt;
+    private TextView homeSearchDisplay;
+    private String searchEditingTabId = "";
+    private boolean searchDraftDirty;
+    private boolean selectAllSearchOnOpen;
+    private int configurationTransitionGeneration;
+    private ZenWebSelectionDelegate webSelectionDelegate;
 
 
     private static final class ContextTarget {
@@ -502,13 +508,37 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         super.onConfigurationChanged(newConfig);
         Log.i(TAG, "onConfigurationChanged widthDp=" + newConfig.screenWidthDp
                 + " previousWide=" + wideLayout);
+
+        saveSearchDraftFromEditor();
+        dismissSearchPopupImmediate();
+        dismissSidebarPopupImmediate();
+        dismissContextMenuImmediate();
+
+        final int generation = beginConfigurationTransition();
+        rebuildFixedSidebarForConfiguration(newConfig);
         applyResponsiveLayout(newConfig);
         applyHomePreferences();
-        dismissContextMenuImmediate();
+
         if (appRoot != null) appRoot.requestApplyInsets();
-        recoverVisibleSurface("configuration-changed", true);
-        render();
+        if (root != null) {
+            root.post(() -> {
+                if (generation != configurationTransitionGeneration
+                        || !isActivityUsable()) {
+                    return;
+                }
+                applyResponsiveLayout(getResources().getConfiguration());
+                applyHomePreferences();
+                render();
+                recoverVisibleSurface("configuration-changed", true);
+                finishConfigurationTransition(generation);
+            });
+        } else {
+            render();
+            recoverVisibleSurface("configuration-changed", true);
+            finishConfigurationTransition(generation);
+        }
     }
+
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
@@ -586,6 +616,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private void detachGeckoView() {
+        clearWebSelectionActions();
         displayedSession = null;
         lastPaintCoverKey = "";
         if (geckoView == null) return;
@@ -612,6 +643,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 }
             }
 
+            installWebSelectionActions(session);
             geckoView.setSession(session);
             displayedSession = session;
             try {
@@ -844,7 +876,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     private void applyResponsiveLayout(Configuration configuration) {
         if (root == null) return;
-        wideLayout = shouldUseFixedSidebar(configuration);
+        rebuildFixedSidebarForConfiguration(configuration);
         boolean immersive = isImmersiveMode();
         boolean showRail = wideLayout && !immersive;
 
@@ -852,18 +884,21 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             fixedSidebar.setVisibility(showRail ? View.VISIBLE : View.GONE);
             ViewGroup.LayoutParams raw = fixedSidebar.getLayoutParams();
             if (raw instanceof LinearLayout.LayoutParams) {
-                LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) raw;
+                LinearLayout.LayoutParams params =
+                        (LinearLayout.LayoutParams) raw;
                 params.width = showRail
                         ? landscapeSidebarWidth(configuration) : 0;
                 fixedSidebar.setLayoutParams(params);
             }
         }
         if (sidebarButton != null) {
-            sidebarButton.setVisibility(!wideLayout && !immersive ? View.VISIBLE : View.GONE);
+            sidebarButton.setVisibility(
+                    !wideLayout && !immersive ? View.VISIBLE : View.GONE);
         }
         if (edgeGestureHandle != null) {
-            edgeGestureHandle.setVisibility(!wideLayout && !immersive
-                    && ZenPanelController.edgeSwipeEnabled(this)
+            edgeGestureHandle.setVisibility(
+                    !wideLayout && !immersive
+                            && ZenPanelController.edgeSwipeEnabled(this)
                     ? View.VISIBLE : View.GONE);
         }
         if (toolbarView != null) {
@@ -873,21 +908,29 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             progressBar.setVisibility(View.GONE);
         }
 
-        if (webHost != null && webHost.getLayoutParams() instanceof LinearLayout.LayoutParams) {
+        if (webHost != null
+                && webHost.getLayoutParams()
+                instanceof LinearLayout.LayoutParams) {
             LinearLayout.LayoutParams params =
                     (LinearLayout.LayoutParams) webHost.getLayoutParams();
             params.setMargins(0, 0, 0, 0);
             webHost.setLayoutParams(params);
             webHost.setElevation(0f);
-            webHost.setBackgroundColor(getColor(R.color.zen_bg));
+            webHost.setBackgroundColor(ZenTheme.webCanvasColor(this));
         }
 
         if (immersive) root.setPadding(0, 0, 0, 0);
-        else root.setPadding(safeInsetLeft, safeInsetTop, safeInsetRight, safeInsetBottom);
+        else root.setPadding(
+                safeInsetLeft, safeInsetTop, safeInsetRight, safeInsetBottom);
 
         root.requestLayout();
-        if (geckoView != null) geckoView.requestLayout();
+        if (geckoView != null) {
+            geckoView.setBackgroundColor(ZenTheme.webCanvasColor(this));
+            geckoView.requestLayout();
+            geckoView.invalidate();
+        }
     }
+
 
     private void recoverVisibleSurface(String reason, boolean verify) {
         if (geckoView == null || browser == null || !isActivityUsable()) return;
@@ -1017,6 +1060,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         try {
             GeckoSession released = geckoView.releaseSession();
             displayedSession = null;
+            installWebSelectionActions(session);
             geckoView.setSession(session);
             displayedSession = session;
             session.setActive(activityResumed);
@@ -1344,10 +1388,18 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     private void applyHomeBackgroundForTheme() {
         if (homeBackgroundView == null) return;
+        homeBackgroundView.setImageDrawable(null);
         homeBackgroundView.setImageResource(homeBackgroundResource());
         homeBackgroundView.setScaleType(ImageView.ScaleType.CENTER_CROP);
         homeBackgroundView.setBackgroundColor(getColor(R.color.zen_bg));
+        if (homeBackgroundScrim != null) {
+            homeBackgroundScrim.setBackgroundResource(
+                    ZenTheme.isDay(this)
+                            ? R.drawable.bg_home_overlay_day
+                            : R.drawable.bg_home_overlay);
+        }
     }
+
 
     private View createNewTabSurface() {
         FrameLayout surface = new FrameLayout(this);
@@ -1362,7 +1414,10 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
         homeBackgroundScrim = new View(this);
-        homeBackgroundScrim.setBackgroundResource(R.drawable.bg_home_overlay);
+        homeBackgroundScrim.setBackgroundResource(
+                ZenTheme.isDay(this)
+                        ? R.drawable.bg_home_overlay_day
+                        : R.drawable.bg_home_overlay);
         surface.addView(homeBackgroundScrim, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
@@ -1399,25 +1454,19 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView search = text("Buscar o escribir una dirección", 14, R.color.zen_text);
-        search.setGravity(Gravity.CENTER_VERTICAL);
-        search.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
-        search.setCompoundDrawablePadding(dp(9));
-        search.setPadding(dp(16), 0, dp(16), 0);
-        search.setBackgroundResource(R.drawable.bg_search_large);
-        search.setClickable(true);
-        search.setFocusable(true);
-        search.setOnClickListener(v -> openHomeSearch());
-        search.setOnTouchListener((view, event) -> {
-            if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-                view.performClick();
-            }
-            return true;
-        });
+        homeSearchDisplay = text("Buscar o escribir una dirección", 14, R.color.zen_text);
+        homeSearchDisplay.setGravity(Gravity.CENTER_VERTICAL);
+        homeSearchDisplay.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
+        homeSearchDisplay.setCompoundDrawablePadding(dp(9));
+        homeSearchDisplay.setPadding(dp(16), 0, dp(16), 0);
+        homeSearchDisplay.setBackgroundResource(R.drawable.bg_search_large);
+        homeSearchDisplay.setClickable(true);
+        homeSearchDisplay.setFocusable(true);
+        homeSearchDisplay.setOnClickListener(v -> openHomeSearch());
         LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
         searchParams.setMargins(0, dp(20), 0, dp(16));
-        page.addView(search, searchParams);
+        page.addView(homeSearchDisplay, searchParams);
 
         TextView quickLabel = label("ACCESOS RÁPIDOS");
         quickLabel.setGravity(Gravity.CENTER);
@@ -1457,19 +1506,17 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         if (trigger == null) return;
         trigger.setClickable(true);
         trigger.setFocusable(true);
-        trigger.setOnClickListener(v -> openSearchEditor(newTabMode));
-        trigger.setOnLongClickListener(v -> {
+        trigger.setOnClickListener(v -> {
+            selectAllSearchOnOpen = false;
             openSearchEditor(newTabMode);
-            mainHandler.postDelayed(() -> {
-                if (searchInput == null || searchPopup == null
-                        || !searchPopup.isShowing()) return;
-                searchInput.requestFocus();
-                searchInput.selectAll();
-                searchInput.performLongClick();
-            }, 170L);
+        });
+        trigger.setOnLongClickListener(v -> {
+            selectAllSearchOnOpen = true;
+            openSearchEditor(newTabMode);
             return true;
         });
     }
+
 
     private void openSearchEditor(boolean newTabMode) {
         if (!isActivityUsable() || isImmersiveMode()) return;
@@ -1550,8 +1597,15 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private View createCompactRail() {
-        return wideLayout ? createLandscapeSidebar() : createNarrowCompactRail();
+        View result = wideLayout
+                ? createLandscapeSidebar()
+                : createNarrowCompactRail();
+        result.setTag(wideLayout
+                ? "zen-sidebar-landscape"
+                : "zen-sidebar-portrait");
+        return result;
     }
+
 
     private View createNarrowCompactRail() {
         LinearLayout rail = new LinearLayout(this);
@@ -2749,6 +2803,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     private void showSidebarPopup() {
         if (isImmersiveMode()) return;
+        if (wideLayout) {
+            dismissSidebarPopupImmediate();
+            lastSidebarFingerprint = "";
+            scheduleRender();
+            return;
+        }
         dismissSidebarPopupImmediate();
 
         int availableWidth = Math.max(dp(240),
@@ -2913,10 +2973,20 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         if (isImmersiveMode()) return;
         dismissSearchPopupImmediate();
 
-        int availableWidth = Math.max(dp(260),
-                getResources().getDisplayMetrics().widthPixels - safeInsetLeft - safeInsetRight);
+        int availableWidth = Math.max(
+                dp(260),
+                getResources().getDisplayMetrics().widthPixels
+                        - safeInsetLeft - safeInsetRight);
         int measuredHeight = appRoot == null ? 0 : appRoot.getHeight();
-        int availableHeight = Math.max(dp(320), measuredHeight - safeInsetTop - safeInsetBottom);
+        int availableHeight = Math.max(
+                dp(320),
+                measuredHeight - safeInsetTop - safeInsetBottom);
+
+        BrowserTab editingTab =
+                browser == null ? null : browser.getActiveTab();
+        searchEditingTabId = editingTab == null ? "" : editingTab.id;
+        searchDraftDirty = editingTab != null
+                && editingTab.addressDraftActive;
 
         FrameLayout overlay = new FrameLayout(this);
         overlay.setBackgroundColor(Color.TRANSPARENT);
@@ -2924,7 +2994,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         scrim.setBackgroundColor(ZenTheme.searchScrim(this));
         scrim.setOnClickListener(v -> dismissSearchPopup());
         overlay.addView(scrim, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -2936,22 +3007,56 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         searchBar.setGravity(Gravity.CENTER_VERTICAL);
 
         searchInput = new ZenAddressEditText(this);
-        searchInput.setSingleLine(true);
         searchInput.setTextColor(getColor(R.color.zen_text));
         searchInput.setHintTextColor(getColor(R.color.zen_muted));
         searchInput.setTextSize(16);
         searchInput.setHint("Buscar o escribir una dirección");
         searchInput.setBackgroundResource(R.drawable.bg_address);
         searchInput.setPadding(dp(16), 0, dp(16), 0);
-        String initial = newTabMode ? "" : activeUrlForEditing();
+
+        String initial;
+        if (editingTab != null && editingTab.addressDraftActive) {
+            initial = safe(editingTab.addressDraft);
+        } else {
+            initial = newTabMode ? "" : activeUrlForEditing();
+        }
         searchInput.setText(initial);
-        if (!initial.isEmpty()) searchInput.setSelection(0, initial.length());
-        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(0, dp(46), 1f);
+
+        int initialStart = initial.length();
+        int initialEnd = initial.length();
+        if (editingTab != null && editingTab.addressDraftActive) {
+            initialStart = Math.max(
+                    0, Math.min(initial.length(),
+                            editingTab.addressSelectionStart));
+            initialEnd = Math.max(
+                    0, Math.min(initial.length(),
+                            editingTab.addressSelectionEnd));
+        } else if (!initial.isEmpty()) {
+            initialStart = 0;
+            initialEnd = initial.length();
+        }
+        try {
+            searchInput.setSelection(initialStart, initialEnd);
+        } catch (IndexOutOfBoundsException ignored) {
+            searchInput.setSelection(initial.length());
+        }
+
+        searchInput.setSelectionListener((start, end) -> {
+            BrowserTab target = browser == null
+                    ? null : browser.getTab(searchEditingTabId);
+            if (target == null) return;
+            target.addressSelectionStart = start;
+            target.addressSelectionEnd = end;
+        });
+
+        LinearLayout.LayoutParams inputParams =
+                new LinearLayout.LayoutParams(0, dp(46), 1f);
         inputParams.setMargins(0, 0, dp(7), 0);
         searchBar.addView(searchInput, inputParams);
 
         searchEngineButton = createSearchEngineButton();
-        searchEngineButton.setOnClickListener(v -> showSearchEngineMenu(searchEngineButton));
+        searchEngineButton.setOnClickListener(
+                v -> showSearchEngineMenu(searchEngineButton));
         searchBar.addView(searchEngineButton, square(46));
         panel.addView(searchBar);
 
@@ -2967,35 +3072,69 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         int panelWidth = Math.min(dp(720), availableWidth - dp(20));
         int panelHeight = Math.min(dp(590), availableHeight - dp(20));
         FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
-                panelWidth, panelHeight, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+                panelWidth,
+                panelHeight,
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
         panelParams.topMargin = dp(10);
         overlay.addView(panel, panelParams);
 
-        searchPopup = new PopupWindow(overlay, availableWidth, availableHeight, true);
-        searchPopup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        searchPopup = new PopupWindow(
+                overlay, availableWidth, availableHeight, true);
+        searchPopup.setBackgroundDrawable(
+                new ColorDrawable(Color.TRANSPARENT));
         searchPopup.setInputMethodMode(PopupWindow.INPUT_METHOD_NEEDED);
-        searchPopup.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        searchPopup.setSoftInputMode(
+                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         searchPopup.setClippingEnabled(true);
         searchPopup.setElevation(dp(24));
         searchPopup.setOnDismissListener(() -> {
+            saveSearchDraftFromEditor();
             dismissSearchEnginePopupImmediate();
             searchPopup = null;
             searchInput = null;
             searchResults = null;
             searchAnimatedPanel = null;
             searchEngineButton = null;
+            searchEditingTabId = "";
+            searchDraftDirty = false;
         });
-        searchPopup.showAtLocation(appRoot, Gravity.START | Gravity.TOP, safeInsetLeft, safeInsetTop);
+        searchPopup.showAtLocation(
+                appRoot,
+                Gravity.START | Gravity.TOP,
+                safeInsetLeft,
+                safeInsetTop);
 
         searchInput.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence value, int start, int count, int after) { }
-            @Override public void onTextChanged(CharSequence value, int start, int before, int count) {
-                refreshSearchResults(value == null ? "" : value.toString());
+            @Override public void beforeTextChanged(
+                    CharSequence value, int start, int count, int after) { }
+
+            @Override public void onTextChanged(
+                    CharSequence value, int start, int before, int count) {
+                String text = value == null ? "" : value.toString();
+                searchDraftDirty = true;
+                BrowserTab target = browser == null
+                        ? null : browser.getTab(searchEditingTabId);
+                if (target != null) {
+                    target.addressDraft = text;
+                    target.addressDraftActive = true;
+                    int cursor = searchInput == null
+                            ? text.length()
+                            : Math.max(0, searchInput.getSelectionStart());
+                    target.addressSelectionStart = cursor;
+                    target.addressSelectionEnd = searchInput == null
+                            ? cursor
+                            : Math.max(0, searchInput.getSelectionEnd());
+                    updateAddressSurfaces(target);
+                }
+                refreshSearchResults(text);
             }
+
             @Override public void afterTextChanged(Editable value) { }
         });
+
         searchInput.setOnEditorActionListener((v, actionId, event) -> {
-            boolean enter = event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER
+            boolean enter = event != null
+                    && event.getKeyCode() == KeyEvent.KEYCODE_ENTER
                     && event.getAction() == KeyEvent.ACTION_DOWN;
             boolean submit = actionId == EditorInfo.IME_ACTION_SEARCH
                     || actionId == EditorInfo.IME_ACTION_GO
@@ -3010,18 +3149,38 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
         refreshSearchResults(initial);
         scrim.setAlpha(0f);
-        scrim.animate().alpha(1f).setDuration(160).start();
+        scrim.animate().alpha(1f).setDuration(160L).start();
         panel.setAlpha(0f);
         panel.setTranslationY(-dp(14));
-        panel.animate().alpha(1f).translationY(0f).setDuration(190)
-                .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+        panel.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(190L)
+                .setInterpolator(
+                        new android.view.animation.DecelerateInterpolator())
+                .start();
+
         searchInput.post(() -> {
             if (searchInput == null || searchPopup == null
-                    || !searchPopup.isShowing()) return;
+                    || !searchPopup.isShowing()) {
+                return;
+            }
             searchInput.requestFocus();
             showKeyboard(searchInput);
+            if (selectAllSearchOnOpen) {
+                selectAllSearchOnOpen = false;
+                searchInput.postDelayed(() -> {
+                    if (searchInput == null || searchPopup == null
+                            || !searchPopup.isShowing()) {
+                        return;
+                    }
+                    searchInput.selectAll();
+                    searchInput.performLongClick();
+                }, 220L);
+            }
         });
     }
+
 
     private TextView createSearchEngineButton() {
         SearchEngine engine = browser.getSearchEngine();
@@ -3230,33 +3389,61 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     private void submitSearch(String value) {
         String input = value == null ? "" : value.trim();
+        BrowserTab target = browser == null
+                ? null : browser.getTab(searchEditingTabId);
+        if (target != null) {
+            target.addressDraft = "";
+            target.addressDraftActive = false;
+            target.addressSelectionStart = 0;
+            target.addressSelectionEnd = 0;
+            if (!target.id.equals(browser.getActiveTabId())) {
+                browser.selectTab(target.id);
+            }
+        }
+        searchDraftDirty = false;
+        searchEditingTabId = "";
         dismissSearchPopup();
+        updateAddressSurfaces(browser == null ? null : browser.getActiveTab());
         if (input.isEmpty()) return;
         beginNavigationTransition(() -> browser.loadInActiveTab(input));
     }
 
+
     private void dismissSearchPopup() {
+        saveSearchDraftFromEditor();
         dismissSearchEnginePopupImmediate();
         PopupWindow popup = searchPopup;
         if (popup == null || !popup.isShowing()) return;
         hideKeyboard(searchInput);
         View panel = searchAnimatedPanel;
         if (panel != null) {
-            panel.animate().alpha(0f).translationY(-dp(10)).setDuration(145)
-                    .withEndAction(() -> { if (popup.isShowing()) popup.dismiss(); }).start();
+            panel.animate()
+                    .alpha(0f)
+                    .translationY(-dp(10))
+                    .setDuration(145L)
+                    .withEndAction(() -> {
+                        if (popup.isShowing()) popup.dismiss();
+                    })
+                    .start();
         } else {
             popup.dismiss();
         }
     }
 
+
     private void dismissSearchPopupImmediate() {
+        saveSearchDraftFromEditor();
         dismissSearchEnginePopupImmediate();
         if (searchPopup != null) searchPopup.dismiss();
         searchPopup = null;
         searchInput = null;
         searchResults = null;
         searchAnimatedPanel = null;
+        searchEngineButton = null;
+        searchEditingTabId = "";
+        searchDraftDirty = false;
     }
+
 
     private void promptWorkspace() {
         EditText input = new EditText(this);
@@ -3676,20 +3863,17 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private void applyHomePreferences() {
         if (homeBackgroundView == null) return;
 
-        boolean showBackground =
-                ZenPanelController.homeBackgroundEnabled(this)
-                        && !ZenTheme.isDay(this);
+        boolean showBackground = ZenTheme.isDay(this)
+                || ZenPanelController.homeBackgroundEnabled(this);
+        applyHomeBackgroundForTheme();
+
+        homeBackgroundView.animate().cancel();
         homeBackgroundView.setVisibility(
                 showBackground ? View.VISIBLE : View.GONE);
         if (homeBackgroundScrim != null) {
             homeBackgroundScrim.setVisibility(
                     showBackground ? View.VISIBLE : View.GONE);
         }
-
-        homeBackgroundView.animate().cancel();
-        // Reload after a configuration change so Android resolves the landscape resource.
-        homeBackgroundView.setImageResource(homeBackgroundResource());
-        homeBackgroundView.setScaleType(ImageView.ScaleType.CENTER_CROP);
 
         if (!showBackground) {
             homeBackgroundView.setAlpha(0f);
@@ -3701,15 +3885,17 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         boolean motion = ZenPanelController.homeMotionEnabled(this)
                 && ZenPanelController.animationsEnabled(this);
         if (motion) {
-            homeBackgroundView.setAlpha(0f);
-            homeBackgroundView.setScaleX(1.015f);
-            homeBackgroundView.setScaleY(1.015f);
+            float startScale = ZenTheme.isDay(this) ? 1.005f : 1.015f;
+            float endScale = ZenTheme.isDay(this) ? 1.025f : 1.055f;
+            homeBackgroundView.setAlpha(1f);
+            homeBackgroundView.setScaleX(startScale);
+            homeBackgroundView.setScaleY(startScale);
             homeBackgroundView.animate()
-                    .alpha(1f)
-                    .scaleX(1.055f)
-                    .scaleY(1.055f)
+                    .scaleX(endScale)
+                    .scaleY(endScale)
                     .setDuration(24000L)
-                    .setInterpolator(new android.view.animation.LinearInterpolator())
+                    .setInterpolator(
+                            new android.view.animation.LinearInterpolator())
                     .start();
         } else {
             homeBackgroundView.setAlpha(1f);
@@ -3717,6 +3903,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
             homeBackgroundView.setScaleY(1f);
         }
     }
+
 
     void applySettingsNow() {
         applyRuntimePreferences();
@@ -4625,16 +4812,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                         && paintGuard.getVisibility() == View.VISIBLE) {
                     releasePaintGuardWhenStable(tab);
                 }
-                if (addressDisplay != null) {
-                    boolean showAddress = !newTab
-                            && ZenPanelController.showAddressBar(this);
-                    addressDisplay.setVisibility(showAddress ? View.VISIBLE : View.GONE);
-                    addressDisplay.setText(
-                            showAddress ? displayHost(tab.url) : "Nueva pestaña");
-                    addressDisplay.setContentDescription(showAddress
-                            ? "Dirección actual: " + tab.url
-                            : "Buscar o escribir una dirección");
-                }
+                updateAddressSurfaces(tab);
                 setEnabled(backButton, tab.canGoBack);
                 setEnabled(forwardButton, tab.canGoForward);
                 reloadButton.setImageResource(
@@ -4684,6 +4862,158 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                     || !active.hasValidPaint) return;
             scheduleSurfaceProbe(expectedSession, 35L, true, "stable-cover-release");
         }, 165L);
+    }
+
+    private void saveSearchDraftFromEditor() {
+        if (browser == null || searchEditingTabId == null
+                || searchEditingTabId.isEmpty()) {
+            return;
+        }
+        BrowserTab target = browser.getTab(searchEditingTabId);
+        if (target == null || searchInput == null) return;
+        if (!searchDraftDirty && !target.addressDraftActive) return;
+
+        String text = searchInput.getText() == null
+                ? "" : searchInput.getText().toString();
+        target.addressDraft = text;
+        target.addressDraftActive = true;
+        target.addressSelectionStart = Math.max(
+                0, searchInput.getSelectionStart());
+        target.addressSelectionEnd = Math.max(
+                0, searchInput.getSelectionEnd());
+        updateAddressSurfaces(target);
+    }
+
+    private void updateAddressSurfaces(BrowserTab tab) {
+        if (tab == null) return;
+        String draft = tab.addressDraftActive
+                ? safe(tab.addressDraft) : "";
+        boolean hasDraft = tab.addressDraftActive && !draft.isEmpty();
+        String visibleText;
+        if (hasDraft) {
+            visibleText = draft;
+        } else if (tab.showStartPage) {
+            visibleText = "Buscar o escribir una dirección";
+        } else {
+            visibleText = displayHost(tab.url);
+        }
+
+        if (addressDisplay != null) {
+            boolean show = (!tab.showStartPage
+                    && ZenPanelController.showAddressBar(this))
+                    || tab.addressDraftActive;
+            addressDisplay.setVisibility(show ? View.VISIBLE : View.GONE);
+            addressDisplay.setText(visibleText);
+            addressDisplay.setContentDescription(
+                    hasDraft
+                            ? "Borrador de dirección: " + draft
+                            : tab.showStartPage
+                            ? "Buscar o escribir una dirección"
+                            : "Dirección actual: " + tab.url);
+        }
+
+        if (homeSearchDisplay != null) {
+            homeSearchDisplay.setText(
+                    hasDraft
+                            ? draft
+                            : "Buscar o escribir una dirección");
+            homeSearchDisplay.setContentDescription(
+                    hasDraft
+                            ? "Borrador de búsqueda: " + draft
+                            : "Buscar o escribir una dirección");
+        }
+    }
+
+    private void installWebSelectionActions(GeckoSession session) {
+        if (session == null) return;
+        try {
+            clearWebSelectionActions();
+            webSelectionDelegate = new ZenWebSelectionDelegate(this);
+            session.setSelectionActionDelegate(webSelectionDelegate);
+            Log.d(TAG, "Web selection actions installed for "
+                    + sessionIdentity(session));
+        } catch (Throwable error) {
+            webSelectionDelegate = null;
+            Log.w(TAG, "Unable to install web selection actions", error);
+        }
+    }
+
+    private void clearWebSelectionActions() {
+        if (webSelectionDelegate == null) return;
+        try {
+            webSelectionDelegate.clearSelection();
+        } catch (Throwable ignored) { }
+        webSelectionDelegate = null;
+    }
+
+    private int beginConfigurationTransition() {
+        int generation = ++configurationTransitionGeneration;
+        if (transitionScrim != null) {
+            transitionScrim.animate().cancel();
+            transitionScrim.setBackgroundColor(
+                    ZenTheme.webCanvasColor(this));
+            transitionScrim.setAlpha(1f);
+            transitionScrim.setVisibility(View.VISIBLE);
+            transitionScrim.bringToFront();
+        }
+        return generation;
+    }
+
+    private void finishConfigurationTransition(int generation) {
+        if (generation != configurationTransitionGeneration) return;
+        BrowserTab active = browser == null ? null : browser.getActiveTab();
+        if (active != null && active.session != null
+                && !active.showStartPage) {
+            scheduleSurfaceProbe(
+                    active.session,
+                    120L,
+                    active.hasValidPaint,
+                    "configuration-stable");
+        }
+        if (transitionScrim != null) {
+            transitionScrim.animate().cancel();
+            transitionScrim.animate()
+                    .alpha(0f)
+                    .setStartDelay(90L)
+                    .setDuration(170L)
+                    .withEndAction(() -> {
+                        if (generation == configurationTransitionGeneration) {
+                            transitionScrim.setVisibility(View.GONE);
+                        }
+                    })
+                    .start();
+        }
+    }
+
+    private void rebuildFixedSidebarForConfiguration(
+            Configuration configuration) {
+        boolean targetWide = shouldUseFixedSidebar(configuration);
+        String expectedTag = targetWide
+                ? "zen-sidebar-landscape"
+                : "zen-sidebar-portrait";
+        boolean wrongMode = fixedSidebar == null
+                || !expectedTag.equals(fixedSidebar.getTag());
+
+        wideLayout = targetWide;
+        if (root == null || !wrongMode) return;
+
+        int index = fixedSidebar == null
+                ? 0 : root.indexOfChild(fixedSidebar);
+        if (index < 0) index = 0;
+        if (fixedSidebar != null) {
+            root.removeView(fixedSidebar);
+        }
+
+        fixedSidebar = createCompactRail();
+        root.addView(
+                fixedSidebar,
+                index,
+                new LinearLayout.LayoutParams(
+                        targetWide
+                                ? landscapeSidebarWidth(configuration)
+                                : 0,
+                        ViewGroup.LayoutParams.MATCH_PARENT));
+        lastSidebarFingerprint = "";
     }
 
     private ImageButton toolbarButton(int drawableRes, String description) {
@@ -4764,11 +5094,12 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     }
 
     private boolean shouldUseFixedSidebar(Configuration configuration) {
-        boolean phoneLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        return configuration != null
+                && configuration.orientation
+                        == Configuration.ORIENTATION_LANDSCAPE
                 && configuration.screenWidthDp >= 600;
-        boolean tablet = configuration.smallestScreenWidthDp >= 600;
-        return phoneLandscape || tablet;
     }
+
 
     private LinearLayout.LayoutParams square(int sizeDp) {
         return new LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp));

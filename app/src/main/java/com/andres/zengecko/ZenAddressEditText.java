@@ -8,8 +8,17 @@ import android.view.ViewParent;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 
-/** Address field that preserves Android's native text selection actions. */
+/**
+ * Editor de dirección que mantiene el cursor, las manijas de selección,
+ * la barra flotante de Android y las acciones del portapapeles.
+ */
 public final class ZenAddressEditText extends EditText {
+    public interface SelectionListener {
+        void onSelectionChanged(int start, int end);
+    }
+
+    private SelectionListener selectionListener;
+
     public ZenAddressEditText(Context context) {
         super(context);
         setSingleLine(true);
@@ -23,6 +32,11 @@ public final class ZenAddressEditText extends EditText {
         setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         setShowSoftInputOnFocus(true);
+        setHapticFeedbackEnabled(true);
+    }
+
+    public void setSelectionListener(SelectionListener listener) {
+        selectionListener = listener;
     }
 
     @Override public boolean onTouchEvent(MotionEvent event) {
@@ -36,7 +50,15 @@ public final class ZenAddressEditText extends EditText {
 
     @Override public boolean performLongClick() {
         requestFocus();
+        setCursorVisible(true);
         return super.performLongClick();
+    }
+
+    @Override protected void onSelectionChanged(int start, int end) {
+        super.onSelectionChanged(start, end);
+        if (selectionListener != null) {
+            selectionListener.onSelectionChanged(start, end);
+        }
     }
 
     @Override protected void onFocusChanged(

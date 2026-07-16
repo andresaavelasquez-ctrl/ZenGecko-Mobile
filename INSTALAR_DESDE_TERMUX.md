@@ -206,3 +206,26 @@ gh run watch
 - Artefacto: `ZenBrowser-v0.1.19-debug`.
 - Release: `ZenBrowser-v0.1.19-debug.apk`.
 
+## v0.1.20 — Search, Selection, Rotation & Redirect Stability
+
+- Muestra los fondos Día vertical y horizontal proporcionados por el usuario.
+- Corrige la condición que ocultaba siempre el fondo cuando el tema era Día.
+- Añade una capa clara independiente para no oscurecer el bonsái.
+- Separa definitivamente el menú flotante vertical del panel fijo horizontal.
+- Reconstruye el panel cuando cambia el modo de orientación, no solo su anchura.
+- Cierra popups antiguos antes de recalcular la ventana.
+- Usa una cobertura del color del tema durante la transición de orientación.
+- Conserva la misma GeckoSession y verifica el fotograma después de rotar.
+- Mantiene un borrador de dirección por pestaña, incluido cursor y selección.
+- Sincroniza en tiempo real Inicio, barra superior y editor de búsqueda.
+- Conserva el texto al cerrar el buscador y al girar el dispositivo.
+- Instala explícitamente el menú flotante de selección de GeckoView.
+- Habilita copiar, cortar, pegar y seleccionar todo dentro de páginas.
+- Reemplaza el temporizador de popups por estados de sesión y redirección.
+- Reutiliza la misma GeckoSession ante solicitudes repetidas válidas.
+- Evita devolver null durante una repetición legítima de window.open().
+- La pestaña hija deja de robar el foco cuando el usuario cambia manualmente.
+- Actualiza README, CHANGELOG, Termux y la matriz de pruebas.
+- Artefacto: `ZenBrowser-v0.1.20-debug`.
+- Release: `ZenBrowser-v0.1.20-debug.apk`.
+
