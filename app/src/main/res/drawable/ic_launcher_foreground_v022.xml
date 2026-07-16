@@ -2,7 +2,7 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:gravity="center">
         <inset
-            android:drawable="@drawable-nodpi/zen_icon_v022_source"
+            android:drawable="@drawable/zen_icon_v022_source"
             android:insetLeft="18dp"
             android:insetTop="18dp"
             android:insetRight="18dp"
