@@ -315,3 +315,11 @@ Artefacto esperado: `ZenBrowser-v0.1.15-debug`.
 - Artefacto: `ZenBrowser-v0.1.20-debug`.
 - Release: `ZenBrowser-v0.1.20-debug.apk`.
 
+## v0.1.20 — SearchInput Type Hotfix
+
+- Corrige el error de compilación en `MainActivity.java`.
+- Cambia el tipo del campo `searchInput` de `EditText` a
+  `ZenAddressEditText`.
+- Permite compilar la llamada a `setSelectionListener()`.
+- Mantiene `versionCode 21` y `versionName 0.1.20` porque la APK anterior
+  no llegó a generarse.

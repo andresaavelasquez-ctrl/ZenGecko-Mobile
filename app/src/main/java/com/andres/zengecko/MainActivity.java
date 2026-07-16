@@ -107,7 +107,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private FrameLayout sidebarPanelHost;
     private View sidebarScrim;
     private View sidebarAnimatedPanel;
-    private EditText searchInput;
+    private ZenAddressEditText searchInput;
     private LinearLayout searchResults;
     private View searchAnimatedPanel;
     private PopupWindow searchEnginePopup;
