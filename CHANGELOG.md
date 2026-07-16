@@ -355,3 +355,15 @@ secundaria o redirección que invoque `onNewSession`.
 - La barra lateral fija queda desactivada: solo existe una presentación del menú.
 - El icono del launcher se reduce y centra sin modificar la marca dentro de la app.
 - versionCode 28 / versionName 2.0.0.
+
+## Zen Browser 2.0.2 — Partial Drawer & Identity Restore
+
+- Se reemplaza la navegación de pantalla completa por un drawer parcial.
+- Diseño parcial independiente para vertical y horizontal.
+- Se restaura Inicio, Atrás, Adelante y Recargar.
+- Se restaura Favoritos, Historial, Perfil y Día/Noche.
+- Se restaura Configuración, Personal, Trabajo, Estudio y Descargas.
+- Cambiar de espacio solo actualiza la zona de pestañas.
+- El icono interno de Zen Browser no se modifica.
+- El icono externo usa la imagen completa original, sin recortar la Z.
+- versionName 2.0.2 / versionCode 29.

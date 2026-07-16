@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 68dp inside the adaptive 108dp viewport: complete Z with a generous safe area. -->
+    <item
+        android:width="68dp"
+        android:height="68dp"
+        android:gravity="center">
+        <bitmap
+            android:src="@drawable/zen_launcher_exact_v202"
+            android:gravity="fill" />
+    </item>
+</layer-list>

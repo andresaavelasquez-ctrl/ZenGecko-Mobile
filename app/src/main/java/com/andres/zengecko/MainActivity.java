@@ -273,6 +273,8 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     
         ZenTheme.applyToRuntime(this);
         mainHandler.post(() -> handleBrowserIntent(getIntent(), false));
+        restorePartialNavigationAfterThemeChange();
+
 }
 
     @Override protected void onStart() {
@@ -2012,12 +2014,285 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
     private View createSidebar() {
         boolean landscape = getResources().getConfiguration().orientation
                 == Configuration.ORIENTATION_LANDSCAPE;
-
-        if (landscape) {
-            return createFullscreenNavigationLandscape();
-        }
-        return createFullscreenNavigationPortrait();
+        return landscape
+                ? createPartialNavigationLandscape()
+                : createPartialNavigationPortrait();
     }
+
+    private View createPartialNavigationPortrait() {
+        return createPartialNavigationContent(false);
+    }
+
+    private View createPartialNavigationLandscape() {
+        return createPartialNavigationContent(true);
+    }
+
+    private View createPartialNavigationContent(boolean compactLandscape) {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(
+                compactLandscape ? dp(11) : dp(13),
+                compactLandscape ? dp(9) : dp(12),
+                compactLandscape ? dp(11) : dp(13),
+                compactLandscape ? dp(8) : dp(10));
+        panel.setClipChildren(false);
+        panel.setClipToPadding(false);
+        ZenLiquidGlass.applySurface(
+                this,
+                panel,
+                R.drawable.bg_sidebar_panel,
+                R.drawable.zen_glass_sidebar_day,
+                R.drawable.zen_glass_sidebar_night);
+
+        View brand = createPartialDrawerBrandHeader();
+        panel.addView(brand, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                compactLandscape ? dp(50) : dp(56)));
+
+        View pageActions = createPartialDrawerPageActions();
+        LinearLayout.LayoutParams pageActionParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                compactLandscape ? dp(42) : dp(46));
+        pageActionParams.setMargins(0, dp(7), 0, dp(4));
+        panel.addView(pageActions, pageActionParams);
+
+        View utilityActions = createPartialDrawerUtilityActions();
+        LinearLayout.LayoutParams utilityParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                compactLandscape ? dp(42) : dp(46));
+        utilityParams.setMargins(0, 0, 0, dp(5));
+        panel.addView(utilityActions, utilityParams);
+
+        ScrollView bodyScroll = new ScrollView(this);
+        bodyScroll.setFillViewport(false);
+        bodyScroll.setVerticalScrollBarEnabled(false);
+        bodyScroll.setClipToPadding(false);
+
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(0, 0, 0, dp(5));
+
+        View search = createPartialDrawerSearchEntry();
+        LinearLayout.LayoutParams searchParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                compactLandscape ? dp(44) : dp(48));
+        searchParams.setMargins(0, dp(2), 0, dp(8));
+        body.addView(search, searchParams);
+
+        TextView quickTitle = label("ACCESOS RÁPIDOS");
+        quickTitle.setPadding(dp(4), 0, 0, dp(3));
+        body.addView(quickTitle);
+        body.addView(createSidebarShortcutGrid());
+
+        sidebarWorkspaceLabel = label(
+                browser.getActiveWorkspaceName().toUpperCase(Locale.ROOT)
+                        + "  ·  PESTAÑAS ABIERTAS");
+        sidebarWorkspaceLabel.setPadding(
+                dp(4), compactLandscape ? dp(8) : dp(11), dp(4), dp(4));
+        body.addView(sidebarWorkspaceLabel);
+
+        sidebarTabsHost = new LinearLayout(this);
+        sidebarTabsHost.setOrientation(LinearLayout.VERTICAL);
+        sidebarTabsHost.setPadding(0, 0, 0, dp(4));
+        populateSidebarTabs();
+        body.addView(sidebarTabsHost, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        bodyScroll.addView(body, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        panel.addView(bodyScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        View dock = createSidebarDock();
+        LinearLayout.LayoutParams dockParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                compactLandscape ? dp(44) : dp(48));
+        dockParams.setMargins(0, dp(6), 0, 0);
+        panel.addView(dock, dockParams);
+        return panel;
+    }
+
+    private View createPartialDrawerBrandHeader() {
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(8), dp(4), dp(7), dp(4));
+        ZenLiquidGlass.applyBrandSurface(
+                this, header, R.drawable.bg_brand_header);
+
+        // Important: this internal brand resource is deliberately left untouched.
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.ic_zen_brand_mark);
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        icon.setPadding(dp(3), dp(3), dp(3), dp(3));
+        header.addView(icon, new LinearLayout.LayoutParams(dp(43), dp(43)));
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text("ZEN BROWSER", 16, R.color.zen_text);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        labels.addView(title);
+        labels.addView(text("Navegación tranquila", 9, R.color.zen_muted));
+
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+        labelParams.setMargins(dp(9), 0, 0, 0);
+        header.addView(labels, labelParams);
+
+        ImageButton close = iconButton(R.drawable.ic_close, "Cerrar menú");
+        close.setBackgroundColor(Color.TRANSPARENT);
+        close.setOnClickListener(v -> dismissSidebarPopup());
+        header.addView(close, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        return header;
+    }
+
+    private View createPartialDrawerPageActions() {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER);
+        row.setPadding(dp(2), dp(2), dp(2), dp(2));
+
+        BrowserTab active = browser == null ? null : browser.getActiveTab();
+
+        ImageButton home = sidebarTopAction(R.drawable.ic_home, "Inicio", () -> {
+            dismissSidebarPopupImmediate();
+            browser.loadInActiveTab(ZenPanelController.homeUrl(this));
+        });
+        row.addView(home, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        ImageButton back = sidebarTopAction(R.drawable.ic_back, "Atrás", () -> {
+            BrowserTab tab = browser == null ? null : browser.getActiveTab();
+            if (tab != null && tab.session != null && tab.canGoBack) {
+                tab.session.goBack();
+                dismissSidebarPopupImmediate();
+            }
+        });
+        boolean canBack = active != null && active.session != null && active.canGoBack;
+        back.setEnabled(canBack);
+        back.setAlpha(canBack ? 1f : .35f);
+        row.addView(back, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        ImageButton forward = sidebarTopAction(
+                R.drawable.ic_forward, "Adelante", () -> {
+                    BrowserTab tab = browser == null ? null : browser.getActiveTab();
+                    if (tab != null && tab.session != null && tab.canGoForward) {
+                        tab.session.goForward();
+                        dismissSidebarPopupImmediate();
+                    }
+                });
+        boolean canForward =
+                active != null && active.session != null && active.canGoForward;
+        forward.setEnabled(canForward);
+        forward.setAlpha(canForward ? 1f : .35f);
+        row.addView(forward, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        ImageButton reload = sidebarTopAction(
+                R.drawable.ic_reload, "Recargar o detener", () -> {
+                    BrowserTab tab = browser == null ? null : browser.getActiveTab();
+                    if (tab != null && tab.session != null) {
+                        if (tab.loading) tab.session.stop();
+                        else tab.session.reload();
+                        dismissSidebarPopupImmediate();
+                    }
+                });
+        row.addView(reload, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        return row;
+    }
+
+    private View createPartialDrawerUtilityActions() {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER);
+        row.setPadding(dp(2), dp(2), dp(2), dp(2));
+
+        row.addView(sidebarTopAction(R.drawable.ic_star, "Favoritos", () -> {
+            dismissSidebarPopupImmediate();
+            ZenPanelController.showFavorites(
+                    this, browser, this::showSidebarPopup);
+        }), new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        row.addView(sidebarTopAction(R.drawable.ic_history, "Historial", () -> {
+            dismissSidebarPopupImmediate();
+            ZenPanelController.showHistory(
+                    this, browser, this::showSidebarPopup);
+        }), new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        row.addView(sidebarTopAction(R.drawable.ic_profile, "Perfil", () -> {
+            dismissSidebarPopupImmediate();
+            ZenPanelController.showProfiles(this, this::showSidebarPopup);
+        }), new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        int themeIcon = ZenTheme.isDay(this)
+                ? R.drawable.ic_theme_moon : R.drawable.ic_theme_sun;
+        String themeDescription = ZenTheme.isDay(this)
+                ? "Activar tema Noche" : "Activar tema Día";
+        row.addView(sidebarTopAction(themeIcon, themeDescription, () -> {
+            getSharedPreferences(
+                    "zen_ui_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("reopen_partial_navigation_v202", true)
+                    .apply();
+            ZenTheme.toggle(this);
+        }), new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        return row;
+    }
+
+    private View createPartialDrawerSearchEntry() {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(13), 0, dp(9), 0);
+        ZenLiquidGlass.applyInputSurface(
+                this, row, R.drawable.bg_address);
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.ic_search);
+        icon.setImageTintList(ColorStateList.valueOf(
+                getColor(R.color.zen_muted)));
+        icon.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        row.addView(icon, new LinearLayout.LayoutParams(dp(23), dp(23)));
+
+        TextView label = text(
+                "Buscar o escribir una dirección", 13, R.color.zen_muted);
+        label.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+        labelParams.setMargins(dp(9), 0, 0, 0);
+        row.addView(label, labelParams);
+        row.setOnClickListener(v -> {
+            dismissSidebarPopupImmediate();
+            mainHandler.postDelayed(() -> openSearchEditor(false), 80L);
+        });
+        return row;
+    }
+
+    private void restorePartialNavigationAfterThemeChange() {
+        boolean reopen = getSharedPreferences(
+                "zen_ui_prefs", Context.MODE_PRIVATE)
+                .getBoolean("reopen_partial_navigation_v202", false);
+        if (!reopen) return;
+
+        getSharedPreferences("zen_ui_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .remove("reopen_partial_navigation_v202")
+                .apply();
+
+        mainHandler.postDelayed(() -> {
+            if (isActivityUsable()
+                    && !isImmersiveMode()
+                    && sidebarOverlayView == null) {
+                showSidebarPopup();
+            }
+        }, 210L);
+    }
+
 
     private View createFullscreenNavigationPortrait() {
         LinearLayout page = new LinearLayout(this);
@@ -3136,27 +3411,71 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         if (isImmersiveMode() || appRoot == null) return;
         dismissSidebarPopupImmediate();
         visualModeTransition = false;
-        final int generation = ++sidebarPresentationGeneration;
+
+        final int presentation = ++sidebarPresentationGeneration;
+        final boolean landscape =
+                getResources().getConfiguration().orientation
+                        == Configuration.ORIENTATION_LANDSCAPE;
 
         if (fixedSidebar != null) fixedSidebar.setVisibility(View.GONE);
 
+        int rootWidth = appRoot.getWidth() > 0
+                ? appRoot.getWidth()
+                : getResources().getDisplayMetrics().widthPixels;
+        int rootHeight = appRoot.getHeight() > 0
+                ? appRoot.getHeight()
+                : getResources().getDisplayMetrics().heightPixels;
+
+        int usableWidth = Math.max(
+                dp(300), rootWidth - safeInsetLeft - safeInsetRight);
+        int usableHeight = Math.max(
+                dp(320), rootHeight - safeInsetTop - safeInsetBottom);
+
+        int panelWidth;
+        if (landscape) {
+            panelWidth = Math.min(
+                    dp(500),
+                    Math.max(dp(350), Math.round(usableWidth * .44f)));
+        } else {
+            panelWidth = Math.min(
+                    dp(430),
+                    Math.max(dp(300), Math.round(usableWidth * .90f)));
+        }
+        panelWidth = Math.min(panelWidth, usableWidth - dp(12));
+
         FrameLayout overlay = new FrameLayout(this);
-        overlay.setBackgroundResource(R.drawable.bg_browser_canvas);
+        overlay.setBackgroundColor(Color.TRANSPARENT);
         overlay.setClickable(true);
         overlay.setFocusable(true);
-        overlay.setTag(generation);
+        overlay.setTag(presentation);
         sidebarOverlayView = overlay;
 
+        View scrim = new View(this);
+        scrim.setBackgroundColor(ZenTheme.sidebarScrim(this));
+        scrim.setAlpha(0f);
+        scrim.setOnClickListener(v -> dismissSidebarPopup());
+        sidebarScrim = scrim;
+        overlay.addView(scrim, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
         View panel = createSidebar();
+        panel.setClickable(true);
+        panel.setFocusable(true);
+        panel.setOnClickListener(v -> { });
         sidebarAnimatedPanel = panel;
+
         sidebarPanelHost = new FrameLayout(this);
         sidebarPanelHost.setBackgroundColor(Color.TRANSPARENT);
         sidebarPanelHost.addView(panel, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
-        overlay.addView(sidebarPanelHost, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
+                panelWidth,
+                usableHeight,
+                Gravity.START | Gravity.TOP);
+        overlay.addView(sidebarPanelHost, panelParams);
 
         FrameLayout.LayoutParams overlayParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -3168,17 +3487,19 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
         appRoot.addView(overlay, overlayParams);
 
         lastPopupSidebarFingerprint = sidebarFingerprint();
-        panel.setAlpha(0f);
-        panel.setScaleX(.985f);
-        panel.setScaleY(.985f);
-        panel.animate()
+
+        scrim.animate().alpha(1f).setDuration(140L).start();
+        sidebarPanelHost.setTranslationX(-panelWidth - dp(12));
+        sidebarPanelHost.setAlpha(.96f);
+        sidebarPanelHost.animate()
+                .translationX(0f)
                 .alpha(1f)
-                .scaleX(1f)
-                .scaleY(1f)
-                .setDuration(175L)
-                .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                .setDuration(190L)
+                .setInterpolator(
+                        new android.view.animation.DecelerateInterpolator())
                 .start();
     }
+
 
 
 
@@ -3219,67 +3540,123 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
     private void refreshSidebarPopup() {
         if (sidebarOverlayView == null
-                || sidebarOverlayView.getParent() == null) return;
+                || sidebarOverlayView.getParent() == null
+                || sidebarTabsHost == null) {
+            return;
+        }
+
         if (sidebarRefreshRunnable != null) {
             mainHandler.removeCallbacks(sidebarRefreshRunnable);
         }
-        final FrameLayout expected = sidebarOverlayView;
+
+        final FrameLayout expectedOverlay = sidebarOverlayView;
+        final LinearLayout expectedTabs = sidebarTabsHost;
         sidebarRefreshRunnable = () -> {
             sidebarRefreshRunnable = null;
-            if (sidebarOverlayView != expected
-                    || expected.getParent() == null) return;
+            if (sidebarOverlayView != expectedOverlay
+                    || expectedOverlay.getParent() == null
+                    || sidebarTabsHost != expectedTabs) {
+                return;
+            }
             populateSidebarTabs();
             updateSidebarWorkspaceChrome();
             lastPopupSidebarFingerprint = sidebarFingerprint();
         };
-        mainHandler.postDelayed(sidebarRefreshRunnable, 20L);
+        mainHandler.postDelayed(sidebarRefreshRunnable, 24L);
     }
+
 
 
 
     private void dismissSidebarPopup() {
         final FrameLayout overlay = sidebarOverlayView;
         if (overlay == null || overlay.getParent() == null) return;
-        View panel = sidebarAnimatedPanel;
-        if (panel != null) {
-            panel.animate()
+
+        if (sidebarScrim != null) {
+            sidebarScrim.animate()
                     .alpha(0f)
-                    .scaleX(.985f)
-                    .scaleY(.985f)
-                    .setDuration(135L)
-                    .withEndAction(() -> removeFullscreenNavigationOverlay(overlay))
+                    .setDuration(115L)
+                    .start();
+        }
+
+        View panelHost = sidebarPanelHost;
+        if (panelHost != null) {
+            panelHost.animate()
+                    .translationX(-panelHost.getWidth() - dp(12))
+                    .alpha(.96f)
+                    .setDuration(155L)
+                    .setInterpolator(
+                            new android.view.animation.AccelerateInterpolator())
+                    .withEndAction(
+                            () -> removePartialNavigationOverlay(overlay))
                     .start();
         } else {
-            removeFullscreenNavigationOverlay(overlay);
+            removePartialNavigationOverlay(overlay);
         }
     }
+
 
 
 
     private void dismissSidebarPopupImmediate() {
         sidebarPresentationGeneration++;
+
         if (sidebarRefreshRunnable != null) {
             mainHandler.removeCallbacks(sidebarRefreshRunnable);
             sidebarRefreshRunnable = null;
         }
-        if (sidebarAnimatedPanel != null) sidebarAnimatedPanel.animate().cancel();
+        if (sidebarAnimatedPanel != null) {
+            sidebarAnimatedPanel.animate().cancel();
+        }
+        if (sidebarPanelHost != null) {
+            sidebarPanelHost.animate().cancel();
+        }
+        if (sidebarScrim != null) {
+            sidebarScrim.animate().cancel();
+        }
 
         FrameLayout overlay = sidebarOverlayView;
-        if (overlay != null) removeFullscreenNavigationOverlay(overlay);
+        if (overlay != null) {
+            removePartialNavigationOverlay(overlay);
+        }
 
-        PopupWindow legacy = sidebarPopup;
+        PopupWindow legacyPopup = sidebarPopup;
         sidebarPopup = null;
-        if (legacy != null) {
-            legacy.setOnDismissListener(null);
+        if (legacyPopup != null) {
+            legacyPopup.setOnDismissListener(null);
             try {
-                if (legacy.isShowing()) legacy.dismiss();
+                if (legacyPopup.isShowing()) legacyPopup.dismiss();
             } catch (RuntimeException error) {
                 Log.w(TAG, "Unable to dismiss legacy sidebar", error);
             }
         }
+
         clearSidebarPresentationReferences();
         sidebarOverlayView = null;
+
+        if (!visualModeTransition && fixedSidebar != null) {
+            fixedSidebar.setVisibility(View.GONE);
+        }
     }
+
+    private void removePartialNavigationOverlay(FrameLayout overlay) {
+        if (overlay == null) return;
+        overlay.animate().cancel();
+
+        ViewParent parent = overlay.getParent();
+        if (parent instanceof ViewGroup) {
+            ((ViewGroup) parent).removeView(overlay);
+        }
+
+        if (sidebarOverlayView == overlay) {
+            sidebarOverlayView = null;
+            clearSidebarPresentationReferences();
+            if (fixedSidebar != null) {
+                fixedSidebar.setVisibility(View.GONE);
+            }
+        }
+    }
+
 
     private void removeFullscreenNavigationOverlay(FrameLayout overlay) {
         if (overlay == null) return;
