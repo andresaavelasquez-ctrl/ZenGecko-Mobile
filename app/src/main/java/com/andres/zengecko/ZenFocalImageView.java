@@ -6,10 +6,15 @@ import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
 import android.widget.ImageView;
 
-/** Center-crop ImageView with a controllable focal point for the bonsai. */
+/**
+ * ImageView with a controllable focal point and a landscape FOCAL_FIT mode.
+ * Portrait keeps full cover. Landscape limits enlargement and lets the view's
+ * background color fill tiny side bands instead of over-zooming the bonsai.
+ */
 public final class ZenFocalImageView extends ImageView {
     private float focalX = .5f;
     private float focalY = .5f;
+    private float maxLandscapeZoomFromFit = 1.16f;
 
     public ZenFocalImageView(Context context) {
         super(context);
@@ -26,12 +31,17 @@ public final class ZenFocalImageView extends ImageView {
     }
 
     public void setFocalPoint(float x, float y) {
-        focalX = Math.max(0f, Math.min(1f, x));
-        focalY = Math.max(0f, Math.min(1f, y));
+        focalX = clamp(x);
+        focalY = clamp(y);
         updateMatrix();
     }
 
-    @Override public void setScaleType(ScaleType scaleType) {
+    public void setMaxLandscapeZoomFromFit(float value) {
+        maxLandscapeZoomFromFit = Math.max(1f, Math.min(1.35f, value));
+        updateMatrix();
+    }
+
+    @Override public void setScaleType(ScaleType ignored) {
         super.setScaleType(ScaleType.MATRIX);
         updateMatrix();
     }
@@ -51,26 +61,42 @@ public final class ZenFocalImageView extends ImageView {
         int viewW = getWidth() - getPaddingLeft() - getPaddingRight();
         int viewH = getHeight() - getPaddingTop() - getPaddingBottom();
         if (drawable == null || viewW <= 0 || viewH <= 0
-                || drawable.getIntrinsicWidth() <= 0 || drawable.getIntrinsicHeight() <= 0) {
+                || drawable.getIntrinsicWidth() <= 0
+                || drawable.getIntrinsicHeight() <= 0) {
             return;
         }
 
         float sourceW = drawable.getIntrinsicWidth();
         float sourceH = drawable.getIntrinsicHeight();
-        float scale = Math.max(viewW / sourceW, viewH / sourceH);
+        float coverScale = Math.max(viewW / sourceW, viewH / sourceH);
+        float fitScale = Math.min(viewW / sourceW, viewH / sourceH);
+        boolean landscape = viewW > viewH;
+        float scale = landscape
+                ? Math.min(coverScale, fitScale * maxLandscapeZoomFromFit)
+                : coverScale;
+
         float scaledW = sourceW * scale;
         float scaledH = sourceH * scale;
-
-        float desiredX = viewW * .5f - scaledW * focalX;
-        float desiredY = viewH * .5f - scaledH * focalY;
-        float minX = viewW - scaledW;
-        float minY = viewH - scaledH;
-        float tx = Math.max(minX, Math.min(0f, desiredX));
-        float ty = Math.max(minY, Math.min(0f, desiredY));
+        float tx = translationForAxis(viewW, scaledW, focalX);
+        float ty = translationForAxis(viewH, scaledH, focalY);
 
         Matrix matrix = new Matrix();
         matrix.setScale(scale, scale);
         matrix.postTranslate(tx + getPaddingLeft(), ty + getPaddingTop());
         setImageMatrix(matrix);
+    }
+
+    private static float translationForAxis(
+            float viewSize, float scaledSize, float focal) {
+        if (scaledSize <= viewSize) {
+            return (viewSize - scaledSize) * .5f;
+        }
+        float desired = viewSize * .5f - scaledSize * focal;
+        float minimum = viewSize - scaledSize;
+        return Math.max(minimum, Math.min(0f, desired));
+    }
+
+    private static float clamp(float value) {
+        return Math.max(0f, Math.min(1f, value));
     }
 }

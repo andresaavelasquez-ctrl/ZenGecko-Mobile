@@ -347,3 +347,13 @@ secundaria o redirección que invoque `onNewSession`.
 - Base beta para estilo Cristal líquido.
 - Permisos para micrófono y mejor preparación para subida de archivos.
 - Nuevo icono adaptativo con el logo v0.1.22.
+
+## v0.1.24 — Glass, carga de archivos y pulido responsive
+
+- Cristal líquido unificado mediante una receta global de superficies.
+- Desenfoque de captura única sin aplicar blur continuo sobre GeckoView.
+- Carga web estable sin recargar o reemplazar la GeckoSession al volver del selector.
+- Compatibilidad con PDF, ZIP, JSON, TXT, documentos, archivos desconocidos y selección múltiple.
+- Protección contra callbacks antiguos que duplicaban el menú lateral al cambiar tema.
+- Icono adaptativo centrado ópticamente y unificado con la marca interna.
+- Fondo horizontal FOCAL_FIT para evitar zoom excesivo del bonsái.

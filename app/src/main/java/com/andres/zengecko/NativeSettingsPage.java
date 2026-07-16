@@ -118,7 +118,8 @@ public final class NativeSettingsPage {
         search.setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_search, 0, 0, 0);
         search.setCompoundDrawablePadding(dp(9));
         search.setPadding(dp(15), 0, dp(15), 0);
-        search.setBackgroundResource(R.drawable.bg_address_rounder);
+        ZenLiquidGlass.applyInputSurface(activity, search,
+                R.drawable.bg_address_rounder);
         page.addView(search, rowParams(48));
 
         TextView section = sectionLabel("CATEGORÍAS");
@@ -217,7 +218,8 @@ public final class NativeSettingsPage {
         back.setTypeface(Typeface.DEFAULT_BOLD);
         back.setGravity(Gravity.CENTER_VERTICAL);
         back.setPadding(dp(5), 0, dp(5), 0);
-        back.setBackgroundResource(R.drawable.bg_settings_row);
+        ZenLiquidGlass.applyGenericSurface(activity, back,
+                R.drawable.bg_settings_row);
         back.setOnClickListener(v -> showHome());
         page.addView(back, rowParams(42));
 
@@ -378,7 +380,8 @@ public final class NativeSettingsPage {
         LinearLayout choices = new LinearLayout(activity);
         choices.setGravity(Gravity.CENTER);
         choices.setPadding(dp(3), dp(3), dp(3), dp(3));
-        choices.setBackgroundResource(R.drawable.bg_profile_selector);
+        ZenLiquidGlass.applyGenericSurface(activity, choices,
+                R.drawable.bg_profile_selector);
         boolean day = ZenTheme.isDay(activity);
         TextView night = themeChoice("☾  Noche", !day, ZenTheme.MODE_NIGHT);
         TextView light = themeChoice("☀  Día", day, ZenTheme.MODE_DAY);
@@ -404,7 +407,8 @@ public final class NativeSettingsPage {
         LinearLayout choices = new LinearLayout(activity);
         choices.setGravity(Gravity.CENTER);
         choices.setPadding(dp(3), dp(3), dp(3), dp(3));
-        choices.setBackgroundResource(R.drawable.bg_profile_selector);
+        ZenLiquidGlass.applyGenericSurface(activity, choices,
+                R.drawable.bg_profile_selector);
         boolean glass = ZenLiquidGlass.isEnabled(activity);
         choices.addView(surfaceStyleChoice("Sólido", !glass,
                 ZenLiquidGlass.STYLE_SOLID), new LinearLayout.LayoutParams(0, dp(42), 1f));
@@ -419,18 +423,26 @@ public final class NativeSettingsPage {
         return section;
     }
 
-    private TextView surfaceStyleChoice(String label, boolean selected, String style) {
+    private TextView surfaceStyleChoice(
+            String label, boolean selected, String style) {
         TextView choice = text(label, 12,
                 selected ? R.color.zen_text : R.color.zen_muted);
         choice.setTypeface(selected ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
         choice.setGravity(Gravity.CENTER);
-        choice.setBackgroundResource(selected
-                ? R.drawable.bg_settings_theme_selected
-                : R.drawable.bg_workspace_idle);
+        ZenLiquidGlass.applySelectableSurface(activity, choice,
+                selected ? R.drawable.bg_settings_theme_selected
+                        : R.drawable.bg_workspace_idle,
+                selected);
         choice.setOnClickListener(v -> {
+            String current = preferences.getString(
+                    ZenLiquidGlass.KEY_STYLE, ZenLiquidGlass.STYLE_SOLID);
+            if (style.equals(current)) return;
             preferences.edit().putString(ZenLiquidGlass.KEY_STYLE, style).apply();
-            changed();
-            activity.recreate();
+            if (activity instanceof MainActivity) {
+                ((MainActivity) activity).prepareForVisualModeChange();
+            }
+            activity.getWindow().getDecorView().postDelayed(
+                    activity::recreate, 70L);
         });
         return choice;
     }
@@ -479,13 +491,16 @@ public final class NativeSettingsPage {
         return "Compatibilidad sin blur";
     }
 
-    private TextView themeChoice(String label, boolean selected, String mode) {
-        TextView choice = text(label, 13, selected ? R.color.zen_text : R.color.zen_muted);
+    private TextView themeChoice(
+            String label, boolean selected, String mode) {
+        TextView choice = text(label, 13,
+                selected ? R.color.zen_text : R.color.zen_muted);
         choice.setTypeface(selected ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
         choice.setGravity(Gravity.CENTER);
-        choice.setBackgroundResource(selected
-                ? R.drawable.bg_settings_theme_selected
-                : R.drawable.bg_workspace_idle);
+        ZenLiquidGlass.applySelectableSurface(activity, choice,
+                selected ? R.drawable.bg_settings_theme_selected
+                        : R.drawable.bg_workspace_idle,
+                selected);
         choice.setOnClickListener(v -> ZenTheme.setMode(activity, mode));
         return choice;
     }
@@ -584,7 +599,8 @@ public final class NativeSettingsPage {
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         input.setImeOptions(EditorInfo.IME_ACTION_DONE);
         input.setPadding(dp(14), 0, dp(14), 0);
-        input.setBackgroundResource(R.drawable.bg_address_rounder);
+        ZenLiquidGlass.applyInputSurface(activity, input,
+                R.drawable.bg_address_rounder);
         page.addView(input, rowParams(48));
         Runnable save = () -> {
             String value = input.getText().toString().trim();

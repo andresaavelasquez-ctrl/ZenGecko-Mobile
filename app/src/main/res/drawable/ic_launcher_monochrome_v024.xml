@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:gravity="center" android:drawable="@drawable/zen_icon_monochrome_v023" />
+    <item android:gravity="center" android:drawable="@drawable/zen_icon_monochrome_v024" />
 </layer-list>

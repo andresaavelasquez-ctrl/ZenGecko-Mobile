@@ -52,9 +52,12 @@ public final class ZenTheme {
                 PREFS, Context.MODE_PRIVATE);
         String current = preferences.getString(KEY_MODE, MODE_NIGHT);
         if (next.equals(current)) return;
+        if (activity instanceof MainActivity) {
+            ((MainActivity) activity).prepareForVisualModeChange();
+        }
         preferences.edit().putString(KEY_MODE, next).apply();
         applyToRuntime(activity);
-        activity.getWindow().getDecorView().postDelayed(activity::recreate, 70L);
+        activity.getWindow().getDecorView().postDelayed(activity::recreate, 90L);
     }
 
     public static void toggle(Activity activity) {
