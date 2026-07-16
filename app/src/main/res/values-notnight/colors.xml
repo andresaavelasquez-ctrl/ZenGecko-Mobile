@@ -8,6 +8,7 @@
     <color name="zen_accent">#6F47C8</color>
     <color name="zen_accent_soft">#E9E0FF</color>
     <color name="zen_border">#D9D4DF</color>
+    <color name="zen_surface_selected">#EEE7FA</color>
     <color name="zen_danger">#C94150</color>
     <color name="zen_success">#257B56</color>
     <color name="zen_key_text">#17131E</color>

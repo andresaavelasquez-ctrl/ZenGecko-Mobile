@@ -255,3 +255,11 @@
 - Artefacto: `ZenBrowser-v0.1.19-debug`.
 - Release: `ZenBrowser-v0.1.19-debug.apk`.
 
+## v0.1.19 — Resource Linking Hotfix
+
+- Corrige la compilación de `bg_landscape_tab.xml`.
+- Añade `zen_surface_selected` a la paleta Noche.
+- Añade `zen_surface_selected` a la paleta Día.
+- Valida referencias locales `@color/zen_*` antes del commit.
+- No cambia `versionCode` ni `versionName` porque la APK v0.1.19
+  no llegó a generarse.
