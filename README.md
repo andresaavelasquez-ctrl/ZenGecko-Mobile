@@ -323,3 +323,18 @@ Artefacto esperado: `ZenBrowser-v0.1.15-debug`.
 - Permite compilar la llamada a `setSelectionListener()`.
 - Mantiene `versionCode 21` y `versionName 0.1.20` porque la APK anterior
   no llegó a generarse.
+
+## v0.1.21 — Unopened GeckoSession Fix
+
+Esta versión corrige exclusivamente el cierre al abrir una ventana, pestaña
+secundaria o redirección que invoque `onNewSession`.
+
+- La sesión hija se crea nueva y permanece sin abrir.
+- Se configuran delegates y ajustes antes de entregarla a Gecko.
+- Zen no llama `session.open()` ni `loadUri()` dentro de `onNewSession`.
+- Se elimina la reutilización de una sesión secundaria ya abierta.
+- La pestaña mantiene una referencia fuerte a la sesión devuelta.
+- Una protección defensiva rechaza cualquier sesión abierta sin cerrar la app.
+- No se modifican interfaz, temas, búsqueda, descargas ni paneles.
+- Artefacto: `ZenBrowser-v0.1.21-debug`.
+- Release: `ZenBrowser-v0.1.21-debug.apk`.
