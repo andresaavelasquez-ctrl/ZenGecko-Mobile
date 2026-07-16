@@ -346,3 +346,12 @@ secundaria o redirección que invoque `onNewSession`.
 - Cristal sin captura o duplicado de GeckoView.
 - Icono exacto reducido y centrado.
 - versionCode 27 / versionName 0.1.26.
+
+## Zen Browser 2.0.0 — Fullscreen Navigation Rebuild
+
+- El antiguo menú lateral se sustituye por un centro de navegación de pantalla completa.
+- Diseño independiente y responsive para vertical y horizontal.
+- El cambio Día/Noche ya no recicla un panel lateral parcial.
+- La barra lateral fija queda desactivada: solo existe una presentación del menú.
+- El icono del launcher se reduce y centra sin modificar la marca dentro de la app.
+- versionCode 28 / versionName 2.0.0.
