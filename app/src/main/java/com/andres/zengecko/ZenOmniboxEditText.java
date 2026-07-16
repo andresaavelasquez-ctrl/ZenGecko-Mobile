@@ -5,23 +5,44 @@ import android.graphics.Rect;
 import android.text.InputType;
 import android.util.AttributeSet;
 import android.view.inputmethod.EditorInfo;
-import androidx.appcompat.widget.AppCompatEditText;
+import android.widget.EditText;
 
-/** Native omnibox: Android owns selection, handles, long-click and clipboard. */
-public final class ZenOmniboxEditText extends AppCompatEditText {
-    public interface SelectionListener { void onSelectionChanged(int start, int end); }
+/**
+ * Native Android omnibox editor.
+ *
+ * Uses only the Android framework EditText so the project does not require
+ * AppCompat. Android handles cursor movement, double-tap selection,
+ * selection handles and copy/cut/paste.
+ */
+public final class ZenOmniboxEditText extends EditText {
+    public interface SelectionListener {
+        void onSelectionChanged(int start, int end);
+    }
+
     private SelectionListener selectionListener;
 
-    public ZenOmniboxEditText(Context c) { super(c); configure(); }
-    public ZenOmniboxEditText(Context c, AttributeSet a) { super(c,a); configure(); }
-    public ZenOmniboxEditText(Context c, AttributeSet a, int s) { super(c,a,s); configure(); }
+    public ZenOmniboxEditText(Context context) {
+        super(context);
+        configure();
+    }
+
+    public ZenOmniboxEditText(Context context, AttributeSet attrs) {
+        super(context, attrs);
+        configure();
+    }
+
+    public ZenOmniboxEditText(Context context, AttributeSet attrs, int style) {
+        super(context, attrs, style);
+        configure();
+    }
 
     private void configure() {
         setSingleLine(true);
         setInputType(InputType.TYPE_CLASS_TEXT
                 | InputType.TYPE_TEXT_VARIATION_URI
                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        setImeOptions(EditorInfo.IME_ACTION_GO | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        setImeOptions(EditorInfo.IME_ACTION_GO
+                | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
         setTextIsSelectable(true);
         setLongClickable(true);
         setFocusable(true);
@@ -29,16 +50,28 @@ public final class ZenOmniboxEditText extends AppCompatEditText {
         setCursorVisible(true);
         setSelectAllOnFocus(false);
         setLinksClickable(false);
-        setCustomSelectionActionModeCallback(null);
-        setCustomInsertionActionModeCallback(null);
     }
 
-    public void setSelectionListener(SelectionListener l) { selectionListener=l; }
-    @Override protected void onSelectionChanged(int s,int e) {
-        super.onSelectionChanged(s,e);
-        if(selectionListener!=null)selectionListener.onSelectionChanged(s,e);
+    public void setSelectionListener(SelectionListener listener) {
+        selectionListener = listener;
     }
-    @Override protected void onFocusChanged(boolean f,int d,Rect r) {
-        super.onFocusChanged(f,d,r); if(f)setCursorVisible(true);
+
+    @Override
+    protected void onSelectionChanged(int start, int end) {
+        super.onSelectionChanged(start, end);
+        if (selectionListener != null) {
+            selectionListener.onSelectionChanged(start, end);
+        }
+    }
+
+    @Override
+    protected void onFocusChanged(
+            boolean focused,
+            int direction,
+            Rect previouslyFocusedRect) {
+        super.onFocusChanged(focused, direction, previouslyFocusedRect);
+        if (focused) {
+            setCursorVisible(true);
+        }
     }
 }
