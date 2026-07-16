@@ -3359,7 +3359,7 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
                             || !searchPopup.isShowing()) {
                         return;
                     }
-                    searchInput.selectAll();
+                    searchInput.setSelection(searchInput.length());
                 }, 220L);
             }
         });
@@ -4090,10 +4090,19 @@ public final class MainActivity extends Activity implements BrowserRepository.Ob
 
 
     void applySettingsNow() {
+        sidebarPresentationGeneration++;
+        dismissSidebarPopupImmediate();
+        if (fixedSidebar != null) {
+            fixedSidebar.animate().cancel();
+            ViewParent parent = fixedSidebar.getParent();
+            if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(fixedSidebar);
+            fixedSidebar = null;
+        }
+        sidebarPanelHost = null;
+        sidebarTabsHost = null;
         applyRuntimePreferences();
         applyHomePreferences();
         render();
-        if (sidebarPopup != null && sidebarPopup.isShowing()) refreshSidebarPopup();
     }
 
     private void applyRuntimePreferences() {

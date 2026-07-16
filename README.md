@@ -357,3 +357,12 @@ secundaria o redirección que invoque `onNewSession`.
 - Protección contra callbacks antiguos que duplicaban el menú lateral al cambiar tema.
 - Icono adaptativo centrado ópticamente y unificado con la marca interna.
 - Fondo horizontal FOCAL_FIT para evitar zoom excesivo del bonsái.
+
+## v0.1.25 — Liquid Glass & Search Reconstruction
+
+- Material Liquid Glass recalibrado para Día y Noche.
+- Eliminada la captura borrosa duplicada detrás del panel lateral.
+- Reconstrucción del editor de dirección con selección nativa de Android.
+- Limpieza atómica de paneles al cambiar tema/orientación.
+- Icono adaptativo corregido con la Z exacta proporcionada.
+- versionCode 26 / versionName 0.1.25.
