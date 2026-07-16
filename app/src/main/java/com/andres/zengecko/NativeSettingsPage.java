@@ -19,6 +19,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -55,7 +56,7 @@ public final class NativeSettingsPage {
 
     private View build() {
         FrameLayout root = new FrameLayout(activity);
-        root.setBackgroundResource(R.drawable.bg_settings_page);
+        ZenLiquidGlass.applyGenericSurface(activity, root, R.drawable.bg_settings_page);
 
         LinearLayout shell = new LinearLayout(activity);
         shell.setOrientation(LinearLayout.VERTICAL);
@@ -176,7 +177,7 @@ public final class NativeSettingsPage {
         LinearLayout row = new LinearLayout(activity);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(8), dp(6), dp(6), dp(6));
-        row.setBackgroundResource(R.drawable.bg_settings_row);
+        ZenLiquidGlass.applyGenericSurface(activity, row, R.drawable.bg_settings_row);
         row.setTag((keywords + " " + title + " " + summary).toLowerCase(Locale.ROOT));
 
         ImageView icon = new ImageView(activity);
@@ -238,6 +239,11 @@ public final class NativeSettingsPage {
             case "appearance":
                 addTitle(page, "Apariencia", "Tema, colores e interfaz");
                 page.addView(themeSelector());
+                page.addView(surfaceStyleSelector());
+                page.addView(glassIntensitySelector());
+                addToggle(page, "Reducir efectos para ahorrar batería",
+                        "Usa una variante más ligera del cristal y sus animaciones.",
+                        ZenLiquidGlass.KEY_REDUCE_EFFECTS, false);
                 addToggle(page, "Animaciones",
                         "Activa transiciones breves y discretas.",
                         ZenPanelController.KEY_ANIMATIONS, true);
@@ -385,6 +391,94 @@ public final class NativeSettingsPage {
         return section;
     }
 
+    private View surfaceStyleSelector() {
+        LinearLayout section = new LinearLayout(activity);
+        section.setOrientation(LinearLayout.VERTICAL);
+        section.setPadding(dp(5), dp(10), dp(5), dp(10));
+
+        TextView label = text("ESTILO DE SUPERFICIES", 10, R.color.zen_muted);
+        label.setTypeface(Typeface.DEFAULT_BOLD);
+        label.setLetterSpacing(.11f);
+        section.addView(label);
+
+        LinearLayout choices = new LinearLayout(activity);
+        choices.setGravity(Gravity.CENTER);
+        choices.setPadding(dp(3), dp(3), dp(3), dp(3));
+        choices.setBackgroundResource(R.drawable.bg_profile_selector);
+        boolean glass = ZenLiquidGlass.isEnabled(activity);
+        choices.addView(surfaceStyleChoice("Sólido", !glass,
+                ZenLiquidGlass.STYLE_SOLID), new LinearLayout.LayoutParams(0, dp(42), 1f));
+        choices.addView(surfaceStyleChoice("Cristal líquido · Beta", glass,
+                ZenLiquidGlass.STYLE_LIQUID_GLASS),
+                new LinearLayout.LayoutParams(0, dp(42), 1f));
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        params.setMargins(0, dp(7), 0, dp(5));
+        section.addView(choices, params);
+        return section;
+    }
+
+    private TextView surfaceStyleChoice(String label, boolean selected, String style) {
+        TextView choice = text(label, 12,
+                selected ? R.color.zen_text : R.color.zen_muted);
+        choice.setTypeface(selected ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+        choice.setGravity(Gravity.CENTER);
+        choice.setBackgroundResource(selected
+                ? R.drawable.bg_settings_theme_selected
+                : R.drawable.bg_workspace_idle);
+        choice.setOnClickListener(v -> {
+            preferences.edit().putString(ZenLiquidGlass.KEY_STYLE, style).apply();
+            changed();
+            activity.recreate();
+        });
+        return choice;
+    }
+
+    private View glassIntensitySelector() {
+        LinearLayout section = new LinearLayout(activity);
+        section.setOrientation(LinearLayout.VERTICAL);
+        section.setPadding(dp(5), dp(8), dp(5), dp(10));
+
+        boolean glass = ZenLiquidGlass.isEnabled(activity);
+        TextView heading = text("INTENSIDAD", 10, R.color.zen_muted);
+        heading.setTypeface(Typeface.DEFAULT_BOLD);
+        heading.setLetterSpacing(.11f);
+        section.addView(heading);
+
+        TextView status = text(glass
+                ? "Calidad: " + qualityLabel(ZenLiquidGlass.quality(activity))
+                : "Activa Cristal líquido para ajustar este control.",
+                10, R.color.zen_muted);
+        status.setPadding(0, dp(4), 0, dp(3));
+        section.addView(status);
+
+        SeekBar slider = new SeekBar(activity);
+        slider.setMax(100);
+        slider.setProgress(ZenLiquidGlass.intensity(activity));
+        slider.setEnabled(glass);
+        slider.setAlpha(glass ? 1f : .42f);
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (!fromUser) return;
+                preferences.edit().putInt(ZenLiquidGlass.KEY_INTENSITY, progress).apply();
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) { }
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {
+                changed();
+            }
+        });
+        section.addView(slider, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42)));
+        return section;
+    }
+
+    private String qualityLabel(String quality) {
+        if (ZenLiquidGlass.QUALITY_FULL.equals(quality)) return "Desenfoque real";
+        if (ZenLiquidGlass.QUALITY_REDUCED.equals(quality)) return "Reducida";
+        return "Compatibilidad sin blur";
+    }
+
     private TextView themeChoice(String label, boolean selected, String mode) {
         TextView choice = text(label, 13, selected ? R.color.zen_text : R.color.zen_muted);
         choice.setTypeface(selected ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
@@ -414,7 +508,7 @@ public final class NativeSettingsPage {
         LinearLayout row = new LinearLayout(activity);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(8), dp(5), dp(3), dp(5));
-        row.setBackgroundResource(R.drawable.bg_settings_row);
+        ZenLiquidGlass.applyGenericSurface(activity, row, R.drawable.bg_settings_row);
 
         LinearLayout labels = new LinearLayout(activity);
         labels.setOrientation(LinearLayout.VERTICAL);
@@ -454,7 +548,7 @@ public final class NativeSettingsPage {
         LinearLayout row = new LinearLayout(activity);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(8), dp(5), dp(6), dp(5));
-        row.setBackgroundResource(R.drawable.bg_settings_row);
+        ZenLiquidGlass.applyGenericSurface(activity, row, R.drawable.bg_settings_row);
 
         ImageView icon = new ImageView(activity);
         icon.setImageResource(iconRes);

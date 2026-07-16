@@ -2,4 +2,5 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="context_media" path="context-media/" />
     <cache-path name="zen_assets" path="zen-assets/" />
+    <cache-path name="web_capture" path="web-capture/" />
 </paths>

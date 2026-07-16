@@ -339,7 +339,7 @@ secundaria o redirección que invoque `onNewSession`.
 - Artefacto: `ZenBrowser-v0.1.21-debug`.
 - Release: `ZenBrowser-v0.1.21-debug.apk`.
 
-## v0.1.22 — Liquid Glass, diseño y utilidades
+## v0.1.23 — Liquid Glass, diseño y utilidades
 
 - Fix visual del panel lateral para evitar el recuadro negro.
 - Ajuste de fondos horizontales del inicio para mejor centrado.

@@ -688,20 +688,10 @@ public final class BrowserRepository {
             }
         });
 
-        session.setPermissionDelegate(new GeckoSession.PermissionDelegate() {
-            @Override public GeckoResult<Integer> onContentPermissionRequest(
-                    GeckoSession ignored, GeckoSession.PermissionDelegate.ContentPermission permission) {
-                int type = permission.permission;
-                boolean autoplay = ZenPanelController.autoplayEnabled(context)
-                        && (type == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE
-                        || type == GeckoSession.PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE);
-                boolean safeDefault = autoplay
-                        || type == GeckoSession.PermissionDelegate.PERMISSION_PERSISTENT_STORAGE;
-                return GeckoResult.fromValue(safeDefault
-                        ? GeckoSession.PermissionDelegate.ContentPermission.VALUE_ALLOW
-                        : GeckoSession.PermissionDelegate.ContentPermission.VALUE_DENY);
-            }
-        });
+        session.setPermissionDelegate(
+                ZenWebCapabilityBridge.permissionDelegate(context));
+        session.setPromptDelegate(
+                ZenWebCapabilityBridge.promptDelegate(context));
 
         if (openSession) {
             session.open(ZenGeckoApplication.runtime(context));

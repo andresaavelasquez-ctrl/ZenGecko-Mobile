@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="zen_surface_style_solid">Sólido</string>
+    <string name="zen_surface_style_liquid_glass">Cristal líquido · Beta</string>
+    <string name="zen_web_permission_title">Permiso del sitio</string>
+    <string name="zen_file_picker_title">Seleccionar archivo</string>
+</resources>

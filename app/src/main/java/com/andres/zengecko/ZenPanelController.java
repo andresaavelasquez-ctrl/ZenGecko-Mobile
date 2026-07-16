@@ -70,6 +70,9 @@ public final class ZenPanelController {
     public static final String KEY_KEY_HAPTICS = "mechanical_key_haptics";
     public static final String KEY_DESKTOP_DEFAULT = "desktop_mode_default";
     public static final String KEY_AUTO_CACHE = "auto_cache_maintenance";
+    public static final String KEY_SURFACE_STYLE = ZenLiquidGlass.KEY_STYLE;
+    public static final String KEY_GLASS_INTENSITY = ZenLiquidGlass.KEY_INTENSITY;
+    public static final String KEY_GLASS_REDUCE = ZenLiquidGlass.KEY_REDUCE_EFFECTS;
     private static final String KEY_LAST_CACHE_CLEAR = "last_cache_clear";
 
     private static final String PREFS_PROFILES = "zen_profiles";
@@ -194,6 +197,18 @@ public final class ZenPanelController {
 
     public static boolean desktopModeDefault(Context context) {
         return ui(context).getBoolean(KEY_DESKTOP_DEFAULT, false);
+    }
+
+    public static boolean liquidGlassEnabled(Context context) {
+        return ZenLiquidGlass.isEnabled(context);
+    }
+
+    public static int liquidGlassIntensity(Context context) {
+        return ZenLiquidGlass.intensity(context);
+    }
+
+    public static boolean reduceGlassEffects(Context context) {
+        return ZenLiquidGlass.reduceEffects(context);
     }
 
     public static boolean automaticCacheMaintenance(Context context) {
