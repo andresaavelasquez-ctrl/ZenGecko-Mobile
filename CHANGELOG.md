@@ -310,3 +310,12 @@ secundaria o redirección que invoque `onNewSession`.
 - No se modifican interfaz, temas, búsqueda, descargas ni paneles.
 - Artefacto: `ZenBrowser-v0.1.21-debug`.
 - Release: `ZenBrowser-v0.1.21-debug.apk`.
+
+## v0.1.22 — Liquid Glass, diseño y utilidades
+
+- Fix visual del panel lateral para evitar el recuadro negro.
+- Ajuste de fondos horizontales del inicio para mejor centrado.
+- Mejora de selección/copiar/pegar en barras de búsqueda y dirección.
+- Base beta para estilo Cristal líquido.
+- Permisos para micrófono y mejor preparación para subida de archivos.
+- Nuevo icono adaptativo con el logo v0.1.22.
